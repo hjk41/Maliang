@@ -463,8 +463,3 @@ class MachineController:
     def device_list():
         from serial.tools import list_ports
         return [dict(port=p.device,description=p.description) for p in list_ports.comports()]
-
-
-
-
-

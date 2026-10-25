@@ -426,5 +426,3 @@ class ControllerTests(unittest.TestCase):
         self.assertFalse(any(b.startswith(b'$J') for b in self.s.sent))
 
 if __name__=='__main__': unittest.main()
-
-
