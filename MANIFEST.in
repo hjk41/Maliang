@@ -2,6 +2,7 @@ include LICENSE README.md requirements.txt maliang.spec main.py build_exe.cmd st
 recursive-include pagewriter/resources *.png *.ico *.pagewriter
 recursive-include tests *.py *.pagewriter *.png
 recursive-include tools *.py
+recursive-include licenses *.txt
 exclude tools/check_real_photos.py
 recursive-include docs *.md
 prune pics

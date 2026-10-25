@@ -8,7 +8,8 @@ parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument("destination", type=Path)
 args = parser.parse_args()
 args.destination.mkdir(parents=True, exist_ok=True)
-for name in ("PySide6", "PySide6_Essentials", "PySide6_Addons", "shiboken6", "numpy", "pyserial"):
+notices = Path(__file__).resolve().parents[1] / "licenses"
+for name in ("PySide6_Essentials", "shiboken6", "numpy", "pyserial"):
     dist = importlib.metadata.distribution(name)
     folder = args.destination / name
     folder.mkdir(exist_ok=True)
@@ -22,6 +23,10 @@ for name in ("PySide6", "PySide6_Essentials", "PySide6_Addons", "shiboken6", "nu
                 target.parent.mkdir(parents=True, exist_ok=True)
                 shutil.copy2(source, target)
                 copied += 1
+    if not copied and name == "pyserial":
+        shutil.copy2(notices / "pyserial-LICENSE.txt", folder / "LICENSE.txt")
+        copied = 1
     if not copied:
         raise SystemExit(f"No license notice found for {name}; check upstream distribution before release.")
     print(f"{name}: collected {copied} license notices")
+shutil.copytree(notices / "qt", args.destination / "Qt-licenses", dirs_exist_ok=True)
