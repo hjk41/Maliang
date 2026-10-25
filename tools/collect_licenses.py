@@ -2,6 +2,7 @@
 import argparse
 import importlib.metadata
 import shutil
+import sys
 from pathlib import Path
 
 parser = argparse.ArgumentParser(description=__doc__)
@@ -9,6 +10,13 @@ parser.add_argument("destination", type=Path)
 parser.add_argument("--agent", action="store_true", help="Collect MCP SDK and its installed runtime dependencies")
 args = parser.parse_args()
 args.destination.mkdir(parents=True, exist_ok=True)
+# The portable executable also redistributes the CPython runtime/standard library.
+python_notice = Path(sys.base_prefix) / "LICENSE.txt"
+if not python_notice.is_file():
+    raise SystemExit("CPython LICENSE.txt is required beside the portable runtime.")
+(args.destination / "Python").mkdir(exist_ok=True)
+shutil.copy2(python_notice, args.destination / "Python" / "LICENSE.txt")
+(args.destination / "Python" / "VERSION.txt").write_text(sys.version, encoding="utf-8")
 notices = Path(__file__).resolve().parents[1] / "licenses"
 names = ["PySide6_Essentials", "shiboken6", "numpy", "pyserial"]
 # The frozen import graph includes setuptools/packaging. Also preserve the
