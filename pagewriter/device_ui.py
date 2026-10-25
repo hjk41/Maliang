@@ -6,7 +6,9 @@ from PySide6.QtGui import QPainterPath, QTransform
 from PySide6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QGridLayout, QFormLayout, QLabel, QPushButton,
     QLineEdit, QDoubleSpinBox, QCheckBox, QMessageBox, QComboBox, QFrame, QGroupBox, QButtonGroup)
 
-PRESETS = {'songboshi_2024_paper': (0, 1, -1, 0), 'songboshi_2024_paper_180': (0, -1, 1, 0)}
+from .devices import create_controller, get_profile, list_profiles
+
+PRESETS = get_profile('songboshi_2024').presets
 TEST_SQUARE_MM = 4.0
 IDLE_STATES = {'idle', 'ready', 'complete'}
 STATE_LABELS = {'disconnected': '未连接', 'unknown': '等待确认（已锁定）', 'idle': '空闲', 'ready': '就绪',
@@ -110,13 +112,13 @@ class Step(QFrame):
 
 
 class DevicePanel(QWidget):
-    def __init__(self, window, controller=None):
+    def __init__(self, window, controller=None, controller_selector=None):
         super().__init__()
         self.window = window
         if controller is None:
-            from .controller import MachineController
-            controller = MachineController()
+            controller = create_controller()
         self.controller = controller
+        self.controller_selector = controller_selector
         self.controller.start()
         self.reference_action = None
         self.buttons = {}
@@ -146,18 +148,41 @@ class DevicePanel(QWidget):
         self.pen_direction.addItem('Z− 降笔', -1)
 
         self.step1 = Step(1, '连接写字机')
+        self.profile_selector = QComboBox()
+        for profile in list_profiles():
+            self.profile_selector.addItem(profile['name'],profile['id'])
+            self.profile_selector.setItemData(self.profile_selector.count()-1,profile['description'],Qt.ItemDataRole.ToolTipRole)
+        profile_id = self.controller.snapshot().get('device_profile','songboshi_2024')
+        self.profile_selector.setCurrentIndex(max(0,self.profile_selector.findData(profile_id)))
+        self.profile_selector.currentIndexChanged.connect(self.profile_changed)
+        self.step1.add(self.profile_selector)
         row = QHBoxLayout()
         self.port = QComboBox()
         self.port.setEditable(True)
         self.port.addItem('COM3')
         self.refresh_ports()
-        self.connect_button = self.make_button('连接', lambda: self.send('connect', port=self.port.currentText().strip()), primary=True)
+        self.connect_button = self.make_button('连接', self.connect_device, primary=True)
         self.disconnect_button = self.make_button('断开', lambda: self.send('disconnect'))
         row.addWidget(self.port, 1)
         row.addWidget(self.connect_button)
         row.addWidget(self.disconnect_button)
         self.step1.add(row)
-        self.step1.add(hint('先关掉原厂软件。连接只读取状态，笔不会动。'))
+        self.connection_hint = hint('先关掉原厂软件。连接只读取状态，笔不会动。')
+        self.step1.add(self.connection_hint)
+        self.virtual_controls = QWidget()
+        virtual_row = QHBoxLayout(self.virtual_controls)
+        virtual_row.setContentsMargins(0,0,0,0)
+        self.virtual_prepare_button = QPushButton('准备当前虚拟页面')
+        self.virtual_prepare_button.clicked.connect(self.prepare_virtual)
+        virtual_row.addWidget(self.virtual_prepare_button)
+        self.virtual_lift_button = QPushButton('舵机抬笔')
+        self.virtual_lower_button = QPushButton('舵机落笔')
+        self.virtual_lift_button.clicked.connect(lambda: self.send('lift_pen'))
+        self.virtual_lower_button.clicked.connect(lambda: self.send('lower_pen'))
+        virtual_row.addWidget(self.virtual_lift_button)
+        virtual_row.addWidget(self.virtual_lower_button)
+        self.step1.add(self.virtual_controls)
+        self.virtual_controls.hide()
 
         self.step2 = Step(2, '书怎么放')
         self.preset_placement = QComboBox()
@@ -373,6 +398,52 @@ class DevicePanel(QWidget):
         self.timer = QTimer(self)
         self.timer.timeout.connect(self.update_state)
         self.timer.start(100)
+        self.populate_profile_presets()
+
+    def populate_profile_presets(self):
+        profile=get_profile(self.controller.snapshot().get('device_profile','songboshi_2024'))
+        selected=self.preset_placement.currentData()
+        self.preset_placement.blockSignals(True)
+        self.preset_placement.clear()
+        labels={'songboshi_2024_paper':'正着放','songboshi_2024_paper_180':'倒着放（转了 180°）'}
+        for preset in profile.presets:
+            self.preset_placement.addItem(labels.get(preset,preset),preset)
+        if self.preset_placement.findData(selected)>=0: self.preset_placement.setCurrentIndex(self.preset_placement.findData(selected))
+        self.preset_placement.blockSignals(False)
+
+    def profile_changed(self, index):
+        profile_id=self.profile_selector.itemData(index)
+        state=self.controller.snapshot()
+        if state.get('connection'):
+            self.profile_selector.blockSignals(True)
+            self.profile_selector.setCurrentIndex(max(0,self.profile_selector.findData(state.get('device_profile','songboshi_2024'))))
+            self.profile_selector.blockSignals(False)
+            return
+        if self.controller_selector is not None:
+            self.controller=self.controller_selector(profile_id)
+        else:
+            self.controller.close()
+            self.controller=create_controller(profile_id)
+        self.controller.start()
+        self.populate_profile_presets()
+        self.current_job=None; self.test_done=self.page_done=False
+        self.clear_preset_confirmation()
+        self.update_state()
+
+    def connect_device(self):
+        if self.profile_selector.currentData()=='simulator_servo':
+            self.send('connect')
+            self.prepare_virtual()
+        else:
+            self.send('connect',port=self.port.currentText().strip())
+
+    def prepare_virtual(self):
+        if self.window is None:
+            self.log.setText('请先打开一个页面。')
+            return
+        project=self.window.project
+        self.send('prepare_virtual',geometry_id=self.geometry_id(),work_bounds=(0,0,project.width,project.height),
+                  write_feed=self.write_feed.value(),travel_feed=self.travel_feed.value())
 
     def make_button(self, label, callback, primary=False, link=False):
         button = QPushButton(label)
@@ -441,7 +512,11 @@ class DevicePanel(QWidget):
 
     def page_linear(self):
         mapping = self.controller.snapshot().get('page_to_machine')
-        return tuple(mapping[:4]) if mapping else PRESETS[self.preset_placement.currentData()]
+        if mapping: return tuple(mapping[:4])
+        profile=get_profile(self.controller.snapshot().get('device_profile','songboshi_2024'))
+        preset=profile.presets.get(self.preset_placement.currentData())
+        if preset is None: raise ValueError('当前设备没有已验证方向，请先三点对准。')
+        return preset
 
     def page_jog(self, dx, dy):
         """Jog along a page direction; the dominant machine axis carries the step."""
@@ -540,6 +615,13 @@ class DevicePanel(QWidget):
         return (min(xs)-pad, min(ys)-pad, max(xs)+pad, max(ys)+pad), tuple(clearance[2]), page_rect
 
     def run_job(self, paths, kind):
+        if self.controller.snapshot().get('simulation'):
+            if not self.initial_travel_clear(paths): return
+            self.current_job=kind; self.page_done=False
+            self.prepare_virtual()
+            self.send('start_job',polylines=paths,geometry_id=self.geometry_id(),preflight_passed=True)
+            self.log.setText('正在离线模拟，未连接真实设备。')
+            return
         if not self.initial_travel_clear(paths):
             return
         bounds = self.job_bounds(paths)
@@ -600,17 +682,17 @@ class DevicePanel(QWidget):
         if action in {'connect', 'disconnect', 'geometry_changed'}:
             self._preset_request_pending = False
         try:
-            self.controller.submit(action, **kwargs)
+            if action == 'start_job' and self.window is not None and hasattr(self.window, 'ensure_application_service'):
+                self.window.ensure_application_service().jobs.submit_operator_paths(
+                    kwargs['polylines'], kwargs['geometry_id'], kind=self.current_job or 'page')
+            else:
+                self.controller.submit(action, **kwargs)
         except Exception as error:
             self.log.setText(self.translate_error(str(error)))
 
     def geometry_id(self):
-        import hashlib
-        p = self.window.project
-        identity = (p.width, p.height, p.image_data, p.image_quad, p.image_offset)
-        if getattr(p, 'image_edges', None) or getattr(p, 'image_guides', None):
-            identity += (repr(p.image_edges), repr(getattr(p, 'image_guides', None)))
-        return hashlib.sha256(repr(identity).encode()).hexdigest()
+        from .document_service import geometry_identity
+        return geometry_identity(self.window.project)
 
     def preset_placement_changed(self, index):
         state = self.controller.snapshot()
@@ -706,6 +788,12 @@ class DevicePanel(QWidget):
             if kind in {'rx', 'tx'}:
                 continue
             if kind == 'complete':
+                if event.get('simulation'):
+                    self.test_done = self.current_job == 'test' or self.test_done
+                    self.page_done = self.current_job == 'page' or self.page_done
+                    self.current_job = None
+                    messages.append('离线模拟完成（未连接真实设备）。')
+                    continue
                 if self.current_job == 'test':
                     self.test_done = True
                     messages.append('试写完成。位置对、线条完整吗？不对就回到第 3 / 4 步调整。')
@@ -726,6 +814,20 @@ class DevicePanel(QWidget):
         try:
             self.drain_messages()
             state = self.controller.snapshot()
+            simulation=state.get('simulation',False)
+            self.virtual_controls.setVisible(simulation)
+            for step in (self.step2,self.step3,self.step4): step.setVisible(not simulation)
+            self.profile_selector.setEnabled(not state.get('connection',False))
+            self.connection_hint.setText('纯内存 XY / 舵机模拟；笔的位置和完成状态均为虚拟模型。' if simulation else get_profile(state.get('device_profile','songboshi_2024')).description)
+            if simulation:
+                self.update_simulation_state(state)
+                return
+            self.port.setVisible(True)
+            profile = get_profile(state.get('device_profile','songboshi_2024'))
+            has_preset = bool(profile.presets)
+            self.step2.setVisible(has_preset)
+            if not has_preset:
+                self.advanced_box.setVisible(True)
             if state.get('mapping_preset') or state.get('anchor_preset_source'):
                 self._preset_request_pending = False
             geometry = self.geometry_id() if self.window is not None else None
@@ -826,8 +928,41 @@ class DevicePanel(QWidget):
             for label, text in reasons.items():
                 label.setText(text)
                 label.setVisible(bool(text))
+            self.preset_placement.setEnabled(has_preset and (not connected or idle))
+            self.preset_confirmed.setEnabled(has_preset)
+            self.preset_button.setEnabled(has_preset and idle and self.preset_confirmed.isChecked())
+            if not has_preset and not calibrated:
+                for button in self.page_jog_buttons.values(): button.setEnabled(False)
+                self.reason3.setText('当前配置无已验证轴向预设；请用高级设置的机器轴点动与三点对准。')
+                self.reason3.setVisible(True)
         except Exception as error:
             self.log.setText(self.translate_error(str(error)))
+
+    def update_simulation_state(self,state):
+        connected=state.get('connection',False)
+        machine_state=state.get('state')
+        idle=connected and machine_state in IDLE_STATES and not state.get('pending')
+        prepared=state.get('calibrated') and state.get('authorized')
+        position=state.get('wpos')
+        where='' if position is None else f" · X {position[0]:.2f} / Y {position[1]:.2f} mm"
+        self.status.setText(f"<b>离线模拟器</b> · {STATE_LABELS.get(machine_state,machine_state)}{where} · 舵机笔 {state.get('pen_state','up')}")
+        self.details.setText('虚拟 XY 坐标；舵机抬落笔；没有 Z 轴。')
+        self.port.setVisible(False); self.port.setEnabled(False)
+        self.connect_button.setEnabled(not connected); self.disconnect_button.setEnabled(connected)
+        self.virtual_prepare_button.setEnabled(connected and not state.get('pending') and machine_state in IDLE_STATES|{'stopped'})
+        self.virtual_lift_button.setEnabled(idle and bool(prepared)); self.virtual_lower_button.setEnabled(idle and bool(prepared))
+        self.send_button.setEnabled(idle and bool(prepared) and self.window is not None)
+        self.test_button.setEnabled(idle and bool(prepared) and self.window is not None)
+        self.pause_button.setEnabled(machine_state=='running'); self.resume_button.setEnabled(machine_state=='paused')
+        self.stop_button.setEnabled(connected and machine_state in {'running','waiting_idle','paused'})
+        self.reset_button.hide(); self.advanced_box.hide()
+        self.reason5.setText('' if prepared else '连接模拟器后，点「准备当前虚拟页面」。')
+        self.reason5.setVisible(not prepared); self.reason6.hide()
+        progress=state.get('progress',(0,0))
+        self.step1.set_status('done' if connected else 'active','纯内存设备')
+        self.step5.set_status('active' if prepared else 'todo',f'模拟确认 {progress[0]} / {progress[1]}')
+        self.step5.set_expanded(True)
+        self.step6.set_expanded(False)
 
     TRANSLATIONS = {
         'Confirmed finite stroke and direction +/-1 required': '请勾选已核对降笔方向与弹簧行程，并选择有效方向和行程。',

@@ -11,7 +11,7 @@ requires-python = ">=3.12"
 license = "MIT"
 license-files = ["LICENSE"]
 authors = [{name = "hjk41"}]
-dependencies = ["PySide6_Essentials==6.11.2", "pyserial==3.5", "numpy==2.5.3"]
+dependencies = ["PySide6_Essentials==6.11.2", "pyserial==3.5", "numpy==2.5.3", "jsonschema>=4.23,<5"]
 classifiers = [
   "Development Status :: 3 - Alpha",
   "Operating System :: Microsoft :: Windows",
@@ -22,6 +22,10 @@ classifiers = [
 [project.optional-dependencies]
 dev = ["Pillow>=11,<13", "fonttools>=4.64,<5", "build>=1.2,<2", "PyInstaller>=6.11,<7"]
 fontbuild = ["Pillow==12.3.0", "fonttools==4.64.0", "opencv-contrib-python-headless==5.0.0.93", "scikit-image==0.26.0"]
+agent = ["mcp>=2.3,<3"]
+
+[project.scripts]
+maliang-agent = "pagewriter.interfaces.cli:main"
 
 [project.gui-scripts]
 maliang = "pagewriter.app:main"

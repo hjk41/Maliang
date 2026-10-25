@@ -7,7 +7,7 @@ import tarfile
 import zipfile
 from pathlib import Path, PurePosixPath
 
-PRIVATE_PREFIXES = ("pics/", "evidence/", "samples/", "assets/")
+PRIVATE_PREFIXES = ("pics/", "evidence/", "samples/", "assets/", ".maliang/")
 PRIVATE_NAME = re.compile(r"^(?:acceptance.*\.json|migration-.*\.json)$")
 PRIVATE_DOC = re.compile(r"^docs/(?:local-|kenjoy-|photo-acceptance-|handoff-20261025)")
 HOME_PATH = re.compile(rb"[A-Za-z]:[\\/]+Users[\\/]+(?!Public(?:[\\/]|$))[^\\/\s\"']+", re.I)

@@ -17,8 +17,10 @@
 - **USB 直连**：连接、页面方向点动、手动升降笔、参考点对准、三点标定、笔高度校准、小方框试写、暂停和停止。
 - **便携项目**：`.pagewriter` 保存底图、样式及使用过的笔迹；导出毫米 SVG。底图不进入书写输出。
 - **九款离线内置单线字体**：四款中文转换字库、Hanzi Writer 笔顺楷备选和四款 EMS 英文字体，无需安装厂商软件。支持中英混排和局部换字体。
+- **机型适配层**：通用笔迹动作、驱动和机型配置分离；支持显式加载 Grbl 型号 JSON，以及不使用 Z 轴的离线舵机模拟器。
+- **Agent 接口**：GUI 与本机 JSON API、CLI、MCP 共享文档、预检与作业状态，支持结构化混排、预览图、版本冲突检测和持久幂等启动。
 
-目前为 **0.6.0 实验版**，主要支持 Windows。已在颂博士 2024 款 / BtWriter 控制器上做过废纸方框和文字试写。新版向导、曲面处理与真实书页定位尚需更多实机验收；其他 Grbl 设备没有完成适配验证。详细边界见 [验证说明](docs/verification.md)。
+目前为 **0.7.0 实验版**，主要支持 Windows。历史版本已在颂博士 2024 款 / BtWriter 控制器上做过废纸方框和文字试写。本轮重构使用假串口和模拟器验收；新版向导、曲面处理与真实书页定位尚需实机验收，通用 Grbl 配置不代表其他型号已验证。详细边界见 [验证说明](docs/verification.md)。
 
 ## 安装与启动
 
@@ -49,10 +51,26 @@ Windows 可能需要设备厂商提供的 CH340 USB 串口驱动。先断开其�
 
 更完整的操作和停止行为见 [使用指南](docs/usage.md)，实现与协议见 [架构说明](docs/architecture.md) 和 [设备协议](docs/device-protocol.md)。
 
+## Agent 与机型配置
+
+桌面版打开「更多 → Agent 接口」，选定工作目录后启用。可直接复制 MCP 配置，Agent 编辑的内容会显示在当前页面中并支持撤销。实机操作须先在书写向导完成定位、笔高和范围确认，再授予本次范围权限；首次测试可选离线舵机模拟器。
+
+无界面的本机服务与命令行：
+
+```powershell
+.venv\Scripts\python.exe -m pip install ".[agent]"
+.venv\Scripts\maliang-agent.exe serve --workspace C:\work\maliang
+.venv\Scripts\maliang-agent.exe --connection C:\work\maliang\.maliang\connection.json fonts
+```
+
+`serve` 是常驻进程，后续命令在另一终端执行。便携版用同目录的 `MaliangAgent.exe` 代替 `maliang-agent.exe`，已包含 MCP 依赖。无界面服务默认仅能连接模拟器；实机授权由桌面操作员界面管理。
+
+同协议型号可通过 `--device-profile model.json` 显式加载配置；加载不会连接或移动设备。配置格式和新增驱动方法见[设备适配](docs/device-adapters.md)，完整工具列表、JSON 操作和 MCP 连接见[Agent 接口](docs/agent-interface.md)。
+
 ## 开发、测试与打包
 
 ```powershell
-.venv\Scripts\python.exe -m pip install -e ".[dev]"
+.venv\Scripts\python.exe -m pip install -e ".[dev,agent]"
 .venv\Scripts\python.exe tools\check_repository.py
 .venv\Scripts\python.exe -m unittest discover -s tests -v
 .venv\Scripts\python.exe -m build
@@ -61,7 +79,7 @@ Windows 可能需要设备厂商提供的 CH340 USB 串口驱动。先断开其�
 
 Windows 测试使用原生 Qt，**不要设置 `QT_QPA_PLATFORM=offscreen`**。自动测试用假串口，不驱动真实设备；本机厂商字体/个人照片的可选测试会在文件缺失时跳过。`--smoke` 会打开窗口并在约 0.8 秒后退出。
 
-EXE 输出在 `dist/Maliang/Maliang.exe`；分发时需要整个 `Maliang` 文件夹。也可运行 `build_exe.cmd`。CI 测试 Python 3.12/3.13、构建并实际安装 wheel、打包 EXE、检查资源和执行启动冒烟测试。主分支 CI 的 EXE 在 Actions artifacts 下载；版本标签 `v*` 可触发独立的测试、打包和 GitHub Release 流程。
+EXE 输出在 `dist/Maliang/`：`Maliang.exe` 为桌面版，`MaliangAgent.exe` 为命令行/MCP 入口，二者共用 `_internal`，分发时需要整个文件夹。也可运行 `build_exe.cmd`。CI 测试 Python 3.12/3.13、安装 wheel 后从仓库外验收 API/MCP 和模拟作业，再打包双入口并重复独立验收。主分支构建在 Actions artifacts 下载；版本标签 `v*` 可触发独立的测试、打包和 GitHub Release 流程。
 
 源码模块暂保留 `pagewriter` 名称，项目格式仍为 `.pagewriter`，以兼容现有文件。贡献方法见 [CONTRIBUTING.md](CONTRIBUTING.md)。
 

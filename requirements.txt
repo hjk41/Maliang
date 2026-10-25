@@ -2,3 +2,4 @@ PySide6_Essentials==6.11.2
 # Direct USB transport; connecting and motion are explicit UI actions.
 pyserial==3.5
 numpy==2.5.3
+jsonschema>=4.23,<5

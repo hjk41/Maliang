@@ -6,10 +6,35 @@ from pathlib import Path
 
 parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument("destination", type=Path)
+parser.add_argument("--agent", action="store_true", help="Collect MCP SDK and its installed runtime dependencies")
 args = parser.parse_args()
 args.destination.mkdir(parents=True, exist_ok=True)
 notices = Path(__file__).resolve().parents[1] / "licenses"
-for name in ("PySide6_Essentials", "shiboken6", "numpy", "pyserial"):
+names = ["PySide6_Essentials", "shiboken6", "numpy", "pyserial"]
+# The frozen import graph includes setuptools/packaging. Also preserve the
+# bundler's bootloader notice and distribution exception beside its executable.
+names += ["setuptools", "packaging", "PyInstaller"]
+def append_runtime_dependencies():
+    """Follow installed runtime requirements, respecting platform/extra markers."""
+    from packaging.requirements import Requirement
+    pending, visited = [('jsonschema', frozenset())], set()
+    if args.agent:
+        pending.append(('mcp', frozenset()))
+    while pending:
+        name, extras = pending.pop()
+        key = (name.lower().replace('_','-'), extras)
+        if key in visited: continue
+        visited.add(key)
+        dist = importlib.metadata.distribution(name)
+        if dist.metadata['Name'] not in names:
+            names.append(dist.metadata['Name'])
+        for value in dist.requires or []:
+            req = Requirement(value)
+            if req.marker and not any(req.marker.evaluate({'extra': extra}) for extra in (extras or {''})):
+                continue
+            pending.append((req.name, frozenset(req.extras)))
+append_runtime_dependencies()
+for name in names:
     dist = importlib.metadata.distribution(name)
     folder = args.destination / name
     folder.mkdir(exist_ok=True)

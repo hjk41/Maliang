@@ -35,7 +35,7 @@ jobs:
           python-version: ${{ matrix.python }}
           cache: pip
       - name: Install
-        run: python -m pip install -e ".[dev]"
+        run: python -m pip install -e ".[dev,agent]"
       - name: Check publication contents
         run: python tools/check_repository.py
       - name: Run offline tests
@@ -68,7 +68,7 @@ jobs:
           python-version: '3.12'
           cache: pip
       - name: Install build tools
-        run: python -m pip install ".[dev]"
+        run: python -m pip install ".[dev,agent]"
       - name: Build and audit wheel and sdist
         shell: pwsh
         run: |
@@ -85,18 +85,22 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           python tools/check_install.py
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python tools/check_agent_install.py
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Build Windows app
         run: python -m PyInstaller --noconfirm --clean maliang.spec
       - name: Collect licenses and smoke EXE
         shell: pwsh
         run: |
-          python tools/collect_licenses.py dist/Maliang/THIRD_PARTY_LICENSES
+          python tools/collect_licenses.py dist/Maliang/THIRD_PARTY_LICENSES --agent
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           Copy-Item LICENSE,docs/third-party.md dist/Maliang/
           $exe = (Resolve-Path dist/Maliang/Maliang.exe).Path
           $process = Start-Process -FilePath $exe -ArgumentList '--smoke' -WorkingDirectory $env:TEMP -WindowStyle Hidden -PassThru
           if (-not $process.WaitForExit(30000)) { $process.Kill(); throw 'EXE smoke timed out' }
           if ($process.ExitCode -ne 0) { throw "EXE exit $($process.ExitCode)" }
+          python tools/check_agent_install.py --agent-exe dist/Maliang/MaliangAgent.exe
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           Compress-Archive -Path dist/Maliang -DestinationPath dist/Maliang-windows-x64.zip
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:

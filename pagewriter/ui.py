@@ -952,6 +952,7 @@ class MainWindow(QMainWindow):
         self.advanced_action.toggled.connect(self.apply_advanced)
         menu.addSeparator()
         self.font_licenses_action = menu.addAction("内置字体与许可…",self.show_font_licenses)
+        self.agent_action = menu.addAction("Agent 接口…", self.show_agent_interface)
         more.setMenu(menu)
         toolbar.addWidget(more)
 
@@ -2170,6 +2171,8 @@ class MainWindow(QMainWindow):
         self.refresh()
         self.set_stage(0)
         self.fit_page()
+        if getattr(self, 'application_service', None) is not None:
+            self.application_service.documents.external_context_changed()
 
     def open_project(self):
         if not self.maybe_save():return
@@ -2185,6 +2188,8 @@ class MainWindow(QMainWindow):
             project = load_project(path)
         except Exception as exc:return self.error(str(exc))
         self.project,self.filename = project,Path(path)
+        if getattr(self, 'application_service', None) is not None:
+            self.application_service.documents.external_context_changed()
         self.selected_id = project.blocks[0].id if project.blocks else None
         self.undo_stack.clear()
         self.redo_stack.clear()
@@ -2291,9 +2296,19 @@ class MainWindow(QMainWindow):
     def error(self,message):
         QMessageBox.warning(self,"马良",message)
 
+    def ensure_application_service(self):
+        from .agent_ui import ensure_service
+        return ensure_service(self)
+
+    def show_agent_interface(self):
+        from .agent_ui import AgentDialog
+        AgentDialog(self).exec()
+
     def closeEvent(self,event):
         if self.maybe_save():
             self.replay_timer.stop()
+            from .agent_ui import shutdown
+            shutdown(self)
             self.device_panel.shutdown()
             event.accept()
         else:event.ignore()

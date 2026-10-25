@@ -19,6 +19,7 @@ pip-*/
 .coverage*
 htmlcov/
 test-results/
+.maliang/
 *.log
 
 # Private local references, history and authoring materials (preserved on disk)
