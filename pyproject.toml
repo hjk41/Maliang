@@ -20,7 +20,8 @@ classifiers = [
 ]
 
 [project.optional-dependencies]
-dev = ["Pillow>=11,<13", "build>=1.2,<2", "PyInstaller>=6.11,<7"]
+dev = ["Pillow>=11,<13", "fonttools>=4.64,<5", "build>=1.2,<2", "PyInstaller>=6.11,<7"]
+fontbuild = ["Pillow==12.3.0", "fonttools==4.64.0", "opencv-contrib-python-headless==5.0.0.93", "scikit-image==0.26.0"]
 
 [project.gui-scripts]
 maliang = "pagewriter.app:main"
@@ -36,4 +37,4 @@ include = ["pagewriter*"]
 version = {attr = "pagewriter.__version__"}
 
 [tool.setuptools.package-data]
-pagewriter = ["resources/*.png", "resources/*.ico", "resources/samples/*.pagewriter"]
+pagewriter = ["resources/*.png", "resources/*.ico", "resources/samples/*.pagewriter", "resources/fonts/*.json", "resources/fonts/*.mlfont", "resources/fonts/*.ttf", "resources/fonts/*-LICENSE.txt", "resources/fonts/ARPHICPL.TXT"]

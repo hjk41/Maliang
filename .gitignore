@@ -7,11 +7,15 @@ __pycache__/
 .venv-*/
 venv/
 build/
+build-env-*/
+build-requirements-*.txt
 dist/
 *.egg-info/
 pip-*/
 .pytest_cache/
 .ruff_cache/
+.font-build/
+.font-build-*/
 .coverage*
 htmlcov/
 test-results/

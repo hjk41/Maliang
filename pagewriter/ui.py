@@ -21,13 +21,14 @@ from .inline_edit import hit_position, paint_cursor, lines_for, cursor_geometry
 from .rectify import RectifyDialog
 from . import __version__
 from .resources import resource_path
+from . import stroke_fonts as builtin_fonts
 
 from .core import (TextBlock, ExclusionZone, Project, build_block_path, preflight, composed_local_path,
                    effective_column_height, sync_block_flow, Drawing, drawing_local_path, build_drawing_path,
                    drawing_local_paths, drawing_strokes, apply_erase,
                    image_to_data,
                    export_svg, offline_gcode, save_project, load_project, starter_project, blank_project, PAPER_SIZES,
-                   path_subpaths, font_warnings, layout_info)
+                   path_subpaths, font_warnings, layout_info, prepare_stroke_document)
 
 
 BLUE = QColor("#245cad")
@@ -949,6 +950,8 @@ class MainWindow(QMainWindow):
         self.advanced_action = menu.addAction("显示高级功能")
         self.advanced_action.setCheckable(True)
         self.advanced_action.toggled.connect(self.apply_advanced)
+        menu.addSeparator()
+        self.font_licenses_action = menu.addAction("内置字体与许可…",self.show_font_licenses)
         more.setMenu(menu)
         toolbar.addWidget(more)
 
@@ -960,7 +963,7 @@ class MainWindow(QMainWindow):
         stylebar.addWidget(QLabel("文字样式 "))
         self.stroke_fonts = QComboBox()
         self.stroke_fonts.addItem("选择单线字体", None)
-        self.stroke_fonts.setToolTip("写字机只能写单线字体。")
+        self.stroke_fonts.setToolTip("内置单线字体可直接书写；也可导入已授权的本地 gfont 字库。")
         self.stroke_fonts.currentIndexChanged.connect(self.choose_stroke_font)
         self.stroke_fonts.setMinimumWidth(190)
         self.stroke_fonts.setMaximumWidth(320)
@@ -1298,7 +1301,11 @@ class MainWindow(QMainWindow):
         QApplication.processEvents()
 
     def populate_vendor_fonts(self):
-        """List a few recommended local single-line fonts; each loads on first use."""
+        """Built-ins are available on a clean install; optional local fonts follow."""
+        for descriptor in builtin_fonts.descriptors():
+            self.stroke_fonts.addItem(descriptor['name'], descriptor)
+            index = self.stroke_fonts.count() - 1
+            self.stroke_fonts.setItemData(index, '内置单线字体 · 来源：' + descriptor.get('source_name', ''), Qt.ItemDataRole.ToolTipRole)
         for label,filename in VENDOR_FONTS:
             path = VENDOR_FONT_DIR / filename
             if path.is_file():
@@ -1306,6 +1313,11 @@ class MainWindow(QMainWindow):
 
     def load_stroke_font(self, index):
         descriptor = self.stroke_fonts.itemData(index)
+        if descriptor and descriptor.get('builtin_id'):
+            # A project may carry an older resource fingerprint. Explicitly
+            # choosing the bundled face upgrades it to the installed version.
+            descriptor = builtin_fonts.descriptor(descriptor['builtin_id'])
+            self.stroke_fonts.setItemData(index,descriptor)
         if descriptor and descriptor.get("pending"):
             QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
             try:
@@ -1376,7 +1388,9 @@ class MainWindow(QMainWindow):
         self.zone_kind.setCurrentIndex(1 if zone and zone.kind == "obstacle" else 0)
         if block:
             if self.editor.toHtml() != block.html or getattr(self,"editor_bound_block",None) is not block:
+                self.editor.document().setDefaultFont(QFont('Microsoft YaHei', 12))
                 self.editor.setHtml(block.html)
+                prepare_stroke_document(self.editor.document(), block)
                 # QTextEdit retains its previous insertion format across setHtml.
                 # Read the new document's first character with an independent
                 # cursor, then reset only the empty insertion point at its start.
@@ -1714,21 +1728,32 @@ class MainWindow(QMainWindow):
     def choose_stroke_font(self,index):
         if self.guard:return
         block=self.block_by_id()
-        if not self.stroke_fonts.itemData(index) or block is None:return
-        try:descriptor=self.load_stroke_font(index)
+        if not self.stroke_fonts.itemData(index):return
+        try:
+            descriptor=self.load_stroke_font(index)
+            families=builtin_fonts.layout_families(descriptor)
         except Exception as error:return self.error(str(error))
         self.preferred_stroke_font=descriptor
+        if block is None:return
         self.record()
         token=descriptor['family']
-        block.stroke_fonts[token]=descriptor
+        block.stroke_fonts[token]=copy.deepcopy(descriptor)
         block.stroke_font=token
         block.writing_mode='single_line'
-        fmt=QTextCharFormat();fmt.setFontFamilies([token]);self.apply_format(fmt)
+        fmt=QTextCharFormat();fmt.setFontFamilies(families);fmt.setFontKerning(False);self.apply_format(fmt)
         self.refresh_scene()
         self.cursor_changed()
 
     def apply_font(self,font):
         if self.block_by_id() and getattr(self.block_by_id(),'writing_mode','outline')=='single_line':return
+        if font.family().startswith('Maliang Stroke '):
+            # Registered metric proxies can also appear in Qt's generic font
+            # picker. Selecting one must use its pen paths, never empty outlines.
+            index=next((i for i in range(1,self.stroke_fonts.count())
+                if (self.stroke_fonts.itemData(i) or {}).get('family')==font.family()),None)
+            if index is not None:
+                return self.choose_stroke_font(index)
+            return
         fmt = QTextCharFormat()
         fmt.setFontFamilies([font.family()])
         self.apply_format(fmt)
@@ -1771,7 +1796,7 @@ class MainWindow(QMainWindow):
 
     def add_text(self):
         import uuid
-        font = getattr(self,"preferred_stroke_font",None) or self.default_stroke_font()
+        font = copy.deepcopy(getattr(self,"preferred_stroke_font",None) or self.default_stroke_font())
         self.record()
         family = font["family"] if font else "Microsoft YaHei"
         block = TextBlock(id=uuid.uuid4().hex,name=f"添注 {len(self.project.blocks)+1}",
@@ -2211,6 +2236,20 @@ class MainWindow(QMainWindow):
         buttons.rejected.connect(dlg.reject)
         layout.addWidget(buttons)
         dlg.exec()
+
+    def show_font_licenses(self):
+        entries = builtin_fonts.catalog()
+        sections = ['马良 · 内置字体与许可', '', '字体名称 / 原始来源 / 许可证', '']
+        sections.extend(f'{entry["name"]} / {entry.get("source_name", "")} / {entry["license"]}' for entry in entries)
+        for entry in entries:
+            try:
+                license_body = builtin_fonts.license_text(entry['id'])
+            except (OSError, ValueError) as exc:
+                return self.error(f'无法读取字体许可：{entry["name"]}\n{exc}')
+            sections.extend(['', '='*64, entry['name'],
+                f'原始来源：{entry.get("source_name", "")}  |  {entry["license"]}',
+                '='*64, '', license_body])
+        self.show_text('内置字体与许可', '\n'.join(sections))
 
     def preview_gcode(self):
         try:code = offline_gcode(self.project)

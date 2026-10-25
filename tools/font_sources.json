@@ -1,0 +1,134 @@
+{
+  "format": 1,
+  "fonts": [
+    {
+      "id": "maoken",
+      "name": "马良·硬笔",
+      "source_name": "猫啃硬笔楷书",
+      "source_url": "https://raw.githubusercontent.com/maoken-fonts/MaokenYingBiKaiShuJ/862082834f1f8686db122f20bebc69d2bd787467/MaokenYingBiKaiShuJ_0.20.ttf",
+      "sha256": "68fb84b7a7eb2c1ffab59e7b75c90176c95bc1a078c4a1f66bd516c60ac75e1a",
+      "license": "OFL-1.1",
+      "license_url": "https://raw.githubusercontent.com/maoken-fonts/MaokenYingBiKaiShuJ/862082834f1f8686db122f20bebc69d2bd787467/OFL.txt",
+      "license_sha256": "dd5a763b1c507d4bb17d8f1de8ee5f161c05a6f115cfe4f074b458a684a66cc0",
+      "kind": "ttf",
+      "fallback_ids": [
+        "hanzi-writer",
+        "ems-readability"
+      ]
+    },
+    {
+      "id": "wenkai-gb",
+      "name": "马良·清楷GB",
+      "source_name": "霞鹜文楷 GB",
+      "source_url": "https://raw.githubusercontent.com/lxgw/LxgwWenKaiGB/4f9074fe7235e23700a8f8875c667a9090a27cbf/fonts/TTF/LXGWWenKaiGB-Regular.ttf",
+      "sha256": "5561d48097d92e5ab99fe7b1459d381bbcdff533bfc479207b089c6860c3990e",
+      "license": "OFL-1.1",
+      "license_url": "https://raw.githubusercontent.com/lxgw/LxgwWenKaiGB/4f9074fe7235e23700a8f8875c667a9090a27cbf/OFL.txt",
+      "license_sha256": "a8aa32c38a3402ba4e40fb6d39c913300dd4a0336290dce5c14e3a2f9308d092",
+      "kind": "ttf",
+      "fallback_ids": [
+        "hanzi-writer",
+        "ems-readability"
+      ]
+    },
+    {
+      "id": "xiaolai",
+      "name": "马良·圆笔",
+      "source_name": "小赖",
+      "source_url": "https://github.com/lxgw/kose-font/releases/download/v3.126/Xiaolai-Regular.ttf",
+      "sha256": "e2f68daf0e72777a8cf58bc83de1b98634b251e537ddbfca24b0ae50d1802da2",
+      "license": "OFL-1.1",
+      "license_url": "https://raw.githubusercontent.com/lxgw/kose-font/v3.126/OFL.txt",
+      "license_sha256": "0df7e09be4c2c850a48bd8beb9cd64b343aad49cd5d3f6cfb2ad2e3d28a56ca4",
+      "kind": "ttf",
+      "fallback_ids": [
+        "hanzi-writer",
+        "ems-readability"
+      ]
+    },
+    {
+      "id": "yozai",
+      "name": "马良·悠笔",
+      "source_name": "悠哉",
+      "source_url": "https://github.com/lxgw/yozai-font/releases/download/v0.868/Yozai-Regular.ttf",
+      "sha256": "25071998a0fe6a72f54c235e714986d259633e5ff670b1a2b5e264387f3316ac",
+      "license": "OFL-1.1",
+      "license_url": "https://raw.githubusercontent.com/lxgw/yozai-font/v0.868/OFL.txt",
+      "license_sha256": "86b3a0b5162848503241d80ea9a309a6459690ba7dc547940758a6a689a53b02",
+      "kind": "ttf",
+      "fallback_ids": [
+        "hanzi-writer",
+        "ems-readability"
+      ],
+      "family": "Maliang Stroke relaxed"
+    },
+    {
+      "id": "ems-readability",
+      "name": "EMS Readability",
+      "source_name": "EMS Readability",
+      "source_url": "https://gitlab.com/api/v4/projects/oskay%2Fsvg-fonts/repository/files/fonts%2FEMS%2FEMSReadability.svg/raw?ref=8c71f2d9e1a5292047bb88e5595a766241b82cc6",
+      "sha256": "f922afa80fdab77ddc8f960d8ce32ebba907aa483c3d8c661676fe0bed942094",
+      "license": "OFL-1.1",
+      "kind": "svg",
+      "fallback_ids": [
+        "maoken",
+        "hanzi-writer"
+      ]
+    },
+    {
+      "id": "ems-tech",
+      "name": "EMS Tech",
+      "source_name": "EMS Tech",
+      "source_url": "https://gitlab.com/api/v4/projects/oskay%2Fsvg-fonts/repository/files/fonts%2FEMS%2FEMSTech.svg/raw?ref=8c71f2d9e1a5292047bb88e5595a766241b82cc6",
+      "sha256": "6da30b0e44022a07043204f6936ba929a3cf756609921a48ce1a7309a5270775",
+      "license": "OFL-1.1",
+      "kind": "svg",
+      "fallback_ids": [
+        "maoken",
+        "hanzi-writer"
+      ]
+    },
+    {
+      "id": "ems-neato",
+      "name": "EMS Neato",
+      "source_name": "EMS Neato",
+      "source_url": "https://gitlab.com/api/v4/projects/oskay%2Fsvg-fonts/repository/files/fonts%2FEMS%2FEMSNeato.svg/raw?ref=8c71f2d9e1a5292047bb88e5595a766241b82cc6",
+      "sha256": "5a92022a654b5795cc884b803d167dc30af18f2ec83a5cb4839fd93e30b268a9",
+      "license": "OFL-1.1",
+      "kind": "svg",
+      "fallback_ids": [
+        "maoken",
+        "hanzi-writer"
+      ]
+    },
+    {
+      "id": "ems-allure",
+      "name": "EMS Allure",
+      "source_name": "EMS Allure",
+      "source_url": "https://gitlab.com/api/v4/projects/oskay%2Fsvg-fonts/repository/files/fonts%2FEMS%2FEMSAllure.svg/raw?ref=8c71f2d9e1a5292047bb88e5595a766241b82cc6",
+      "sha256": "d9ef1032a2059d3b90189b9cacc26124812962503d6e7bdfe8b09b09904ce379",
+      "license": "OFL-1.1",
+      "kind": "svg",
+      "fallback_ids": [
+        "maoken",
+        "hanzi-writer"
+      ]
+    },
+    {
+      "id": "hanzi-writer",
+      "name": "马良·笔顺楷（备选）",
+      "source_name": "Hanzi Writer / Make Me a Hanzi",
+      "kind": "hanzi",
+      "license": "Arphic-1999",
+      "source_url": "https://codeload.github.com/chanind/hanzi-writer-data/tar.gz/68d10a4b21150cae5e1ebbd223eed289cf32d90c",
+      "license_url": "https://raw.githubusercontent.com/chanind/hanzi-writer-data/68d10a4b21150cae5e1ebbd223eed289cf32d90c/ARPHICPL.TXT",
+      "fallback_ids": [
+        "ems-readability",
+        "maoken"
+      ],
+      "sha256": "6596f675e58dafb5b6bd58d003e0f407d88e4bbccf8477c1ee2039a6faefab55",
+      "license_sha256": "57e2289236e3546bf114fb1023a725ca37ce3403c60a7f24eb8a7891c4731b07",
+      "license_encoding": "big5"
+    }
+  ]
+}

@@ -1,7 +1,7 @@
 """PageWriter's offline, millimetre based document and path engine.
 
 The same cubic outlines are used by the scene, collision checking and SVG.
-No machine connection or font files are bundled here.
+Stroke-font resources are read lazily by stroke_fonts; this engine is offline.
 """
 from __future__ import annotations
 
@@ -11,16 +11,18 @@ import json
 import math
 import os
 import re
+import unicodedata
 import zipfile
+from html import unescape
 from dataclasses import dataclass, field, asdict
 from pathlib import Path
 from xml.sax.saxutils import escape
-from . import gfont
+from . import gfont, stroke_fonts
 
 from PySide6.QtCore import QByteArray, QBuffer, QIODevice, QPointF, QRectF, QSizeF, Qt
 from PySide6.QtGui import (QColor, QFont, QFontDatabase, QFontMetricsF, QGuiApplication, QImage, QPainter,
                           QPainterPath, QPainterPathStroker, QPen, QPolygonF,
-                          QTextDocument, QTransform)
+                          QTextCharFormat, QTextCursor, QTextDocument, QTransform)
 
 PX_PER_MM = 96.0 / 25.4
 MM_PER_PX = 1.0 / PX_PER_MM
@@ -145,6 +147,7 @@ def make_document(block: TextBlock) -> QTextDocument:
     doc.setDefaultFont(default)
     doc.setDocumentMargin(0)
     doc.setHtml(block.html)
+    prepare_stroke_document(doc, block)
     geometry=_flow_geometry(block)
     if block.column_height>0:
         doc.setPageSize(QSizeF(geometry["page_width_px"],geometry["page_height_px"]))
@@ -152,6 +155,56 @@ def make_document(block: TextBlock) -> QTextDocument:
         doc.setTextWidth(block.width * PX_PER_MM)
     doc.size()  # force shaping before reading glyph runs
     return doc
+
+
+def prepare_stroke_document(doc, block):
+    """Apply the same private font metrics to rendering and rich-text editing."""
+    if block.writing_mode != 'single_line':
+        return
+    errors = {}
+    def families_for(descriptor):
+        try:
+            return stroke_fonts.layout_families(descriptor)
+        except (ValueError, OSError, KeyError) as exc:
+            # A saved project still opens when an asset is absent or upgraded.
+            # System metrics are only used to position the editing caret; the
+            # pen renderer below marks this resource missing and draws no
+            # replacement outlines, so export remains blocked after an edit.
+            errors[descriptor['family']] = str(exc)
+            return [descriptor['family'], 'Microsoft YaHei']
+    default = block.stroke_fonts.get(block.stroke_font)
+    if default and default.get('builtin_id'):
+        font = QFont(doc.defaultFont())
+        font.setFamilies(families_for(default))
+        font.setKerning(False)
+        font.setHintingPreference(QFont.HintingPreference.PreferNoHinting)
+        doc.setDefaultFont(font)
+    changes = []
+    paragraph = doc.begin()
+    while paragraph.isValid():
+        it = paragraph.begin()
+        while not it.atEnd():
+            fragment = it.fragment()
+            if fragment.isValid():
+                descriptor = stroke_fonts.resolve_descriptor(block.stroke_fonts,
+                    fragment.charFormat().fontFamilies(), block.stroke_font)
+                if descriptor and descriptor.get('builtin_id'):
+                    fmt = QTextCharFormat()
+                    font = QFont()
+                    font.setFamilies(families_for(descriptor))
+                    font.setKerning(False)
+                    font.setHintingPreference(QFont.HintingPreference.PreferNoHinting)
+                    fmt.setFontFamilies(font.families())
+                    fmt.setFontKerning(False)
+                    changes.append((fragment.position(), fragment.length(), fmt))
+            it += 1
+        paragraph = paragraph.next()
+    for start, length, fmt in changes:
+        cursor = QTextCursor(doc)
+        cursor.setPosition(start)
+        cursor.setPosition(start + length, QTextCursor.MoveMode.KeepAnchor)
+        cursor.mergeCharFormat(fmt)
+    doc.setProperty('_stroke_font_errors', errors)
 
 
 def _flow_geometry(block):
@@ -309,14 +362,29 @@ def _validate_project(project: Project):
         for token, font in b.stroke_fonts.items():
             if not isinstance(token,str) or not isinstance(font,dict) or font.get('family')!=token:
                 raise ValueError('单线字体标识无效')
-            if not _finite_number(font.get('em_size')) or not 0<font['em_size']<=1_000_000 or not isinstance(font.get('glyphs'),dict) or len(font['glyphs'])>65536:
+            if not _finite_number(font.get('em_size')) or not 0<font['em_size']<=1_000_000 or not isinstance(font.get('glyphs'),dict) or len(font['glyphs'])>200_000:
                 raise ValueError('单线字体参考字身或缓存无效')
             if not isinstance(font.get('path',''),str) or not isinstance(font.get('sha256'),str) or not re.fullmatch('[a-f0-9]{64}',font['sha256']):
                 raise ValueError('单线字体来源无效')
             if 'origin_x' in font and (not _finite_number(font['origin_x']) or abs(font['origin_x'])>1_000_000):
                 raise ValueError('单线字体共同原点无效')
+            if 'builtin_id' in font and (not isinstance(font['builtin_id'],str) or not re.fullmatch('[a-z0-9-]{1,64}',font['builtin_id'])):
+                raise ValueError('内置单线字体编号无效')
+            if font.get('builtin_id') and (not stroke_fonts.valid_family(font['builtin_id'],font['family']) or font['em_size'] != 1000 or font.get('origin_x',0) != 0):
+                raise ValueError('内置单线字体坐标系或族名无效')
+            if 'resource_versions' in font:
+                versions=font['resource_versions']
+                if not isinstance(versions,dict) or len(versions)>50:
+                    raise ValueError('内置单线字体资源版本无效')
+                for font_id,version in versions.items():
+                    if not isinstance(font_id,str) or not re.fullmatch('[a-z0-9-]{1,64}',font_id) or not isinstance(version,dict) or not set(version)<={'sha256','layout_sha256'} or any(not isinstance(v,str) or not re.fullmatch('[a-f0-9]{64}',v) for v in version.values()):
+                        raise ValueError('内置单线字体资源版本无效')
+            if 'glyph_sources' in font:
+                sources=font['glyph_sources']
+                if not isinstance(sources,dict) or len(sources)>200_000 or any(not isinstance(code,str) or not code.isascii() or not code.isdecimal() or not 0<=int(code)<=0x10ffff or 0xd800<=int(code)<=0xdfff or not isinstance(source,str) or not re.fullmatch('[a-z0-9-]{1,64}',source) for code,source in sources.items()):
+                    raise ValueError('单线字体字形来源缓存无效')
             for code,data in font['glyphs'].items():
-                if not isinstance(code,str) or not code.isascii() or not code.isdecimal() or not 0<=int(code)<=65535:
+                if not isinstance(code,str) or not code.isascii() or not code.isdecimal() or not 0<=int(code)<=0x10ffff or 0xd800<=int(code)<=0xdfff:
                     raise ValueError('单线字体缓存字符编号无效')
                 path_from_data(data)
                 total_elements+=len(data)
@@ -367,6 +435,11 @@ def _layout_key(block):
     source=block.html + "\0" + str(float(block.width))
     if block.writing_mode=='single_line':
         source+='\0single-line-v2:'+block.stroke_font+json.dumps({k:{'sha256':v.get('sha256'),'em_size':v.get('em_size'),'origin_x':v.get('origin_x')} for k,v in block.stroke_fonts.items()},sort_keys=True)
+        builtin_versions={k:v['resource_versions'] for k,v in block.stroke_fonts.items() if v.get('builtin_id') and 'resource_versions' in v}
+        if builtin_versions:
+            source+='\0builtin-resources:'+json.dumps(builtin_versions,sort_keys=True)
+        if any(unicodedata.category(char)=='Cf' for char in unescape(block.html)):
+            source+='\0invisible-format-controls-v1'
     # Preserve the original v1 cache identity for unlimited single-column
     # projects, including when the original fonts are missing on a new PC.
     if block.columns!=1 or block.column_height>0:
@@ -601,6 +674,9 @@ def effective_column_height(block):
 def local_block_path(block: TextBlock) -> QPainterPath:
     key = _layout_key(block)
     if block.frozen_key == key:
+        for descriptor in block.stroke_fonts.values():
+            if 'glyph_sources' in descriptor:
+                descriptor['glyph_sources']={k:v for k,v in descriptor['glyph_sources'].items() if k in descriptor['glyphs']}
         return path_from_data(block.frozen_path)
     if os.name == "nt" and QGuiApplication.platformName() == "offscreen":
         raise RuntimeError("Windows 的 Qt offscreen 插件不提供可靠的本机字形；请清除 QT_QPA_PLATFORM，使用原生 Windows 平台运行（测试可隐藏窗口）。")
@@ -612,6 +688,7 @@ def local_block_path(block: TextBlock) -> QPainterPath:
     underlines=[]
     char_boxes=[]
     used_glyphs={}
+    resource_errors=doc.property('_stroke_font_errors') or {}
     # Qt 6.11's Python binding can return an empty list for the default
     # QTextLayout.glyphRuns(-1,-1). Per-line extraction shapes reliably.
     for paragraph, line, origin in entries:
@@ -635,8 +712,8 @@ def local_block_path(block: TextBlock) -> QPainterPath:
                 if fragment.isValid():
                     fmt=fragment.charFormat()
                     requested=fmt.fontFamilies() or []
-                    token=next((f for f in requested if f in block.stroke_fonts or f.startswith('PageWriter GFont ')),block.stroke_font)
-                    descriptor=block.stroke_fonts.get(token)
+                    descriptor=stroke_fonts.resolve_descriptor(block.stroke_fonts,requested,block.stroke_font)
+                    token=descriptor['family'] if descriptor else (requested[0] if requested else block.stroke_font)
                     size=fmt.fontPointSize() or doc.defaultFont().pointSizeF()
                     unit=fragment.position()-paragraph.position()
                     for char in fragment.text():
@@ -647,9 +724,27 @@ def local_block_path(block: TextBlock) -> QPainterPath:
                             char_boxes.append({'start':paragraph.position()+unit,'length':length,'column':column,
                                 'x':(origin.x()+x+dx)*MM_PER_PX,'y':column_y*MM_PER_PX,
                                 'width':abs(endx-x)*MM_PER_PX,'height':line.height()*MM_PER_PX})
-                            if not char.isspace() and char not in ('\u2028','\u2029'):
+                            formatting = unicodedata.category(char) == 'Cf'
+                            # Qt can materialize a soft hyphen at a wrap using
+                            # a system font, although cursorToX gives it zero
+                            # width. Until a pen-font layout alias is available,
+                            # block that case rather than omit visible ink or
+                            # claim the system hyphen's metrics as pen metrics.
+                            visible_soft_hyphen = (char == '\u00ad'
+                                and unit+length == line.textStart()+line.textLength()
+                                and unit+length < paragraph.length()-1)
+                            if visible_soft_hyphen:
                                 entry=fonts.setdefault(token,{'family':token or '未选择单线字库','style':'single_line','missing_glyphs':False,'missing_characters':''})
+                                entry['missing_glyphs']=True
+                                entry['error']='软连字符（U+00AD），请替换成普通连字符或加宽文字框'
+                                if char not in entry['missing_characters']:entry['missing_characters']+=char
+                            elif not formatting and not char.isspace() and char not in ('\u2028','\u2029'):
+                                entry=fonts.setdefault(token,{'family':token or '未选择单线字库','style':'single_line','missing_glyphs':False,'missing_characters':''})
+                                if descriptor and str(ord(char)) in descriptor['glyphs']:
+                                    used_glyphs.setdefault(token,set()).add(str(ord(char)))
                                 try:
+                                    if token in resource_errors:
+                                        raise ValueError(resource_errors[token])
                                     glyph=gfont.glyph_for(descriptor,char) if descriptor else None
                                 except (ValueError,OSError,KeyError,zipfile.BadZipFile) as exc:
                                     glyph=None
@@ -670,7 +765,8 @@ def local_block_path(block: TextBlock) -> QPainterPath:
             indexes=run.glyphIndexes()
             previous=fonts.get(font_id,{})
             fonts[font_id] = {"family": raw.familyName(), "style": raw.styleName(), "fingerprint": font_id,
-                              "missing_glyphs": bool(previous.get("missing_glyphs")) or 0 in indexes}
+                              "missing_glyphs": bool(previous.get("missing_glyphs")) or 0 in indexes
+                                  or raw.familyName().startswith('Maliang Stroke ')}
             for glyph, pos in zip(indexes, run.positions()):
                 glyph_path = raw.pathForGlyph(glyph)
                 dx=column*(geometry["column_width"]+block.column_gap)*PX_PER_MM
@@ -699,7 +795,10 @@ def local_block_path(block: TextBlock) -> QPainterPath:
     block.fonts = list(fonts.values())
     if block.writing_mode=='single_line':
         for token,descriptor in block.stroke_fonts.items():
-            descriptor['glyphs']={k:v for k,v in descriptor['glyphs'].items() if k in used_glyphs.get(token,set())}
+            used=used_glyphs.get(token,set())
+            descriptor['glyphs']={k:v for k,v in descriptor['glyphs'].items() if k in used}
+            if 'glyph_sources' in descriptor:
+                descriptor['glyph_sources']={k:v for k,v in descriptor['glyph_sources'].items() if k in descriptor['glyphs']}
     block.frozen_overflow=overflow
     block.frozen_layout={**geometry,"overflow":overflow,
                          "page_count":max((line["column"]+1 for line in line_metadata),default=1),
@@ -1010,7 +1109,8 @@ def preflight(project: Project) -> list[Collision]:
                 failures.append(Collision(block.id,"overflow",f"「{block.name}」文字溢出 {block.columns} 栏区域（栏高或栏宽不足），请增加栏高/总宽、调整字号或减少内容"))
             if any(f.get("missing_glyphs") for f in block.fonts):
                 missing=''.join(f.get('missing_characters','') for f in block.fonts)
-                failures.append(Collision(block.id,"font",f"「{block.name}」包含字体无法描绘的字符{('：'+missing) if missing else ''}，请替换字体或字符"))
+                detail='；'.join(dict.fromkeys(f['error'] for f in block.fonts if f.get('missing_glyphs') and f.get('error')))
+                failures.append(Collision(block.id,"font",f"「{block.name}」包含字体无法描绘的字符{('：'+missing) if missing else ''}，请替换字体或字符"+(f'。{detail}' if detail else '')))
         if path.isEmpty():
             continue
         envelope = stroke_envelope(path, project.pen_width + 2 * project.margin)
@@ -1135,9 +1235,16 @@ def font_warnings(project: Project) -> list[str]:
     families = {family.casefold() for family in QFontDatabase.families()}
     missing = set()
     stroke_missing=set()
+    builtin_missing=set()
     for block in project.blocks:
         if block.writing_mode=='single_line':
             for font in block.stroke_fonts.values():
+                if font.get('builtin_id'):
+                    try:
+                        stroke_fonts.layout_families(font)
+                    except (ValueError, OSError, KeyError):
+                        builtin_missing.add(font.get('name',font['family']))
+                    continue
                 if not Path(font.get('path','')).is_file():
                     stroke_missing.add(font.get('name','本地单线字库'))
             continue
@@ -1153,7 +1260,8 @@ def font_warnings(project: Project) -> list[str]:
                         missing.add('/'.join(requested))
                 it+=1
             paragraph=paragraph.next()
-    return ([f"缺少单线字库 {family}；已保存字形仍可使用，新增未保存的字符会阻止导出，请重新导入原字库。" for family in sorted(stroke_missing)]+
+    return ([f"内置字体 {family} 的排版资源缺失或版本改变；已保存笔迹保持不变，请重新选择字体后编辑。" for family in sorted(builtin_missing)]+
+            [f"缺少单线字库 {family}；已保存字形仍可使用，新增未保存的字符会阻止导出，请重新导入原字库。" for family in sorted(stroke_missing)]+
             [f"缺少字体 {family}；已保存轮廓可原样预览/导出，编辑后将使用系统替代字体。" for family in sorted(missing)])
 
 

@@ -106,6 +106,9 @@ def register_font(path):
 
 def glyph_for(descriptor, char):
     """Return portable raw centerline data, lazily reading just this character."""
+    if descriptor.get('builtin_id'):
+        from .stroke_fonts import glyph_for as builtin_glyph_for
+        return builtin_glyph_for(descriptor, char)
     key = str(ord(char))
     cache = descriptor['glyphs']
     if key in cache:

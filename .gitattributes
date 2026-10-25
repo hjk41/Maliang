@@ -7,3 +7,7 @@
 *.ps1 text eol=crlf
 *.png binary
 *.ico binary
+# Preserve checked font hashes and the unchanged upstream Big5 license bytes.
+pagewriter/resources/fonts/* -text whitespace=cr-at-eol
+# Keep upstream license text verbatim, including its original trailing spaces.
+pagewriter/resources/fonts/*-LICENSE.txt whitespace=cr-at-eol,-blank-at-eol

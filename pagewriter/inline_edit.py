@@ -47,6 +47,11 @@ def cursor_geometry(block, position):
 def preedit_layout(canvas, editor):
     font=editor.textCursor().charFormat().font()
     if font.pointSizeF()<=0:font=QFont(editor.document().defaultFont())
+    if any(family.startswith(('Maliang Stroke ', 'PageWriter GFont ')) for family in font.families()):
+        # Private layout TTFs intentionally have no contours. Composition is
+        # transient UI text, so show a readable font until the IME commits it;
+        # the committed characters still use the real single-line renderer.
+        font.setFamilies(['Microsoft YaHei'])
     layout=QTextLayout(canvas.preedit_text,font)
     ranges=[]
     default=QTextLayout.FormatRange();default.start=0;default.length=len(canvas.preedit_text)

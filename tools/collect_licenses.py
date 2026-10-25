@@ -30,3 +30,12 @@ for name in ("PySide6_Essentials", "shiboken6", "numpy", "pyserial"):
         raise SystemExit(f"No license notice found for {name}; check upstream distribution before release.")
     print(f"{name}: collected {copied} license notices")
 shutil.copytree(notices / "qt", args.destination / "Qt-licenses", dirs_exist_ok=True)
+font_notices = Path(__file__).resolve().parents[1] / "pagewriter/resources/fonts"
+licenses = list(font_notices.glob('*-LICENSE.txt'))
+if len(licenses) != 9:
+    raise SystemExit('The nine bundled font license notices are required.')
+(args.destination / 'Fonts').mkdir(exist_ok=True)
+for path in licenses:
+    shutil.copy2(path, args.destination / 'Fonts' / path.name)
+shutil.copy2(font_notices / 'ARPHICPL.TXT', args.destination / 'Fonts' / 'ARPHICPL.TXT')
+print('Fonts: collected nine source/derivative license notices')
