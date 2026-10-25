@@ -1,0 +1,5 @@
+blank_issues_enabled: true
+contact_links:
+  - name: 私密漏洞报告
+    url: https://github.com/hjk41/Maliang/security/advisories/new
+    about: 不要在公开 Issue 中披露凭据或漏洞细节。

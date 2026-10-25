@@ -1,0 +1,11 @@
+name: Feature request
+description: 提出改进建议
+title: "[Feature] "
+labels: [enhancement]
+body:
+  - type: textarea
+    id: need
+    attributes:
+      label: 使用场景与希望的行为
+    validations:
+      required: true

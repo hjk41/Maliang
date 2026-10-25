@@ -1,0 +1,23 @@
+name: Bug report
+description: 提供可复现步骤，避免上传个人照片或原始字库。
+title: "[Bug] "
+labels: [bug]
+body:
+  - type: textarea
+    id: behavior
+    attributes:
+      label: 发生了什么？
+      description: 写明复现步骤、期望和实际结果。
+    validations:
+      required: true
+  - type: input
+    id: environment
+    attributes:
+      label: 软件版本 / Windows / Python
+    validations:
+      required: true
+  - type: textarea
+    id: device
+    attributes:
+      label: 设备与脱敏日志（如涉及）
+      description: 写明控制器、是否手推过笔尖、当时状态。用合成示例代替个人页面；不要上传字库。

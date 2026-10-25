@@ -1,0 +1,9 @@
+include LICENSE README.md requirements.txt maliang.spec main.py build_exe.cmd start_maliang.cmd
+recursive-include pagewriter/resources *.png *.ico *.pagewriter
+recursive-include tests *.py *.pagewriter *.png
+recursive-include tools *.py
+exclude tools/check_real_photos.py
+recursive-include docs *.md
+prune pics
+prune evidence
+exclude docs/handoff-20261025.md docs/kenjoy-*.md docs/photo-acceptance-*.md docs/local-*.md

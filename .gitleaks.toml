@@ -1,0 +1,9 @@
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = "Serialized geometry cache identities are SHA256 digests, not credentials"
+condition = "AND"
+paths = ['''\.pagewriter$''']
+regexTarget = "line"
+regexes = ['''^\s*"frozen_key"\s*:\s*"[a-f0-9]{64}",?\s*$''']

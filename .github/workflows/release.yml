@@ -1,0 +1,81 @@
+name: Release
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: windows-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: '3.12'
+          cache: pip
+      - run: python -m pip install ".[dev]"
+      - name: Check tag and publication contents
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          python -c "import os; from pagewriter import __version__; assert os.environ['RELEASE_TAG'] == 'v'+__version__"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python tools/check_repository.py
+      - run: python -m unittest discover -s tests -v
+      - name: Build packages
+        run: python -m build
+      - name: Audit and install wheel
+        shell: pwsh
+        run: |
+          $packages = Get-ChildItem dist -File | ForEach-Object FullName
+          python tools/check_repository.py @packages
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $wheel = (Get-ChildItem dist/*.whl).FullName
+          python -m pip install --force-reinstall --no-deps $wheel
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python tools/check_install.py
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - run: python -m PyInstaller --noconfirm --clean maliang.spec
+      - name: Bundle and check EXE
+        shell: pwsh
+        run: |
+          python tools/collect_licenses.py dist/Maliang/THIRD_PARTY_LICENSES
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          Copy-Item LICENSE,docs/third-party.md dist/Maliang/
+          $exe = (Resolve-Path dist/Maliang/Maliang.exe).Path
+          $process = Start-Process -FilePath $exe -ArgumentList '--smoke' -WorkingDirectory $env:TEMP -WindowStyle Hidden -PassThru
+          if (-not $process.WaitForExit(30000)) { $process.Kill(); throw 'EXE smoke timed out' }
+          if ($process.ExitCode -ne 0) { throw "EXE exit $($process.ExitCode)" }
+          Compress-Archive -Path dist/Maliang -DestinationPath dist/Maliang-windows-x64.zip
+          $files = Get-ChildItem dist/*.whl,dist/*.tar.gz,dist/*.zip
+          $files | ForEach-Object { "{0}  {1}" -f (Get-FileHash $_ -Algorithm SHA256).Hash.ToLower(),$_.Name } | Set-Content -Encoding utf8 dist/SHA256SUMS
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: release
+          path: |
+            dist/*.whl
+            dist/*.tar.gz
+            dist/*.zip
+            dist/SHA256SUMS
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: release
+          path: release
+      - name: Publish experimental release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: gh release create "$RELEASE_TAG" release/* --verify-tag --generate-notes --prerelease --title "Maliang $RELEASE_TAG"
