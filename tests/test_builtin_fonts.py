@@ -123,8 +123,12 @@ class PortableStrokeTests(unittest.TestCase):
                 core.export_svg(project)
 
 
-@unittest.skipUnless(resource_path('fonts', 'catalog.json').is_file(), 'Bundled font build is not present')
 class BundledFontsAcceptance(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        if not resource_path('fonts', 'catalog.json').is_file():
+            raise AssertionError('The repository must include the bundled font catalog and resources.')
+
     def test_invisible_format_characters_preserve_positions_without_pen_paths(self):
         font = stroke_fonts.descriptor('wenkai-gb')
         text = '中文 co\u00adoperate X\u200bY a\u200db'

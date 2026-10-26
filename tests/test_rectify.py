@@ -1,9 +1,8 @@
-"""Four-corner picker: hidden native Qt, synthetic and real photos, no hardware."""
-from pathlib import Path
+"""Four-corner picker: native Qt and original synthetic pages, no hardware."""
 import unittest
 from unittest.mock import patch
 from PySide6.QtCore import QPointF, Qt
-from PySide6.QtGui import QImage, QKeyEvent
+from PySide6.QtGui import QColor, QImage, QKeyEvent, QPainter, QPen, QPolygonF
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication, QDialog
 from pagewriter import core, ui
@@ -119,19 +118,25 @@ class Picker(unittest.TestCase):
         self.assertEqual(self.d.selected, 1)
 
 
-class RealPhoto(unittest.TestCase):
-    def test_partial_page_photo_with_hidden_corner(self):
-        path = Path(__file__).resolve().parents[1]/'pics'/'e7ea4e6b80775209e3f4d6a7113a31b6.jpg'
-        if not path.is_file():
-            self.skipTest('user photo absent')
-        photo = QImage(str(path))
+class PartialPageFixture(unittest.TestCase):
+    def test_cropped_synthetic_page_with_hidden_corner(self):
+        photo = image(1300, 1700)
+        painter = QPainter(photo)
+        painter.setPen(QPen(QColor('#334455'), 8))
+        painter.drawPolygon(QPolygonF([QPointF(*p) for p in
+            [(130, 120), (1170, 150), (1120, 1700), (90, 1760)]]))
+        for y in range(260, 1500, 100):
+            painter.drawLine(220, y, 1020, y+15)
+        painter.fillRect(0, 1550, 200, 150, QColor('#aaaabb'))
+        painter.end()
         d = RectifyDialog(None, photo, page_size=(185, 260))
-        # Bottom-left corner is under a hand: estimated a little outside the frame.
+        # The fixture's lower-left corner is occluded and below the crop.
         for point in [(130, 120), (1170, 150), (1120, 1700), (90, 1760)]:
             d.add_point(QPointF(*point)); d.finish_edit()
         self.assertTrue(d.ok.isEnabled())
         self.assertIn('照片外面', d.message.text())
         self.assertFalse(d.preview.pixmap().isNull())
+        self.assertAlmostEqual(d.preview.pixmap().width()/d.preview.pixmap().height(), 185/260, delta=.02)
         d.close()
 
 

@@ -113,6 +113,9 @@ class ApplicationService:
             from PySide6.QtWidgets import QApplication
             if QApplication.activeModalWidget() is not None or getattr(self.window.canvas, 'preedit_text', ''):
                 raise ServiceError('GUI_BUSY', '用户正在确认操作或输入法组词，请稍后重读版本再编辑')
+            if (getattr(self.window, 'pending_drawing_change', None) or
+                    getattr(self.window, 'erase_pending', None) or QApplication.mouseButtons()):
+                raise ServiceError('GUI_BUSY', '用户正在调整或擦除图画，请操作结束后重读版本再编辑')
 
     def dispatch(self, method, params=None):
         self._owner()

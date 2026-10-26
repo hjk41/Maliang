@@ -8,6 +8,7 @@ from pathlib import Path
 os.environ['QT_QPA_PLATFORM']='windows' if os.name=='nt' else 'offscreen'
 from PySide6.QtWidgets import QApplication
 from pagewriter import core, gfont
+from font_fixtures import make_font
 
 app=QApplication.instance() or QApplication([])
 
@@ -87,18 +88,17 @@ class GFontTests(unittest.TestCase):
                 self.assertFalse(b.frozen_overflow)
                 self.assertFalse(core.preflight(core.Project(blocks=[b])))
 
-    def test_actual_local_fastwriting_columns(self):
-        source=Path('C:/Program Files (x86)/写字机软件/gcodeFonts/超连笔快写-3500字_kvenjoy_gantry.gfont')
-        if not source.is_file():self.skipTest('Optional user-owned local font is absent')
-        f=gfont.register_font(source)
-        for columns in (2,3):
-            b=self.block(copy.deepcopy(f))
-            b.width=108;b.columns=columns;b.column_height=40;b.column_gap=8
-            b.html='<p style="font-size:14pt">读到这里，慢一点。<br>在书页上直接编辑。<br><u>重点可以加下划线。</u><br>两栏文字连续流动。</p>'
-            core.local_block_path(b)
-            self.assertFalse(b.frozen_overflow)
-            self.assertFalse(core.preflight(core.Project(blocks=[b])))
-            self.assertLess(len(b.stroke_fonts[f['family']]['glyphs']),50)
+    def test_generated_joined_font_columns(self):
+        with tempfile.TemporaryDirectory() as directory:
+            f=make_font(directory, joined=True)
+            for columns in (2,3):
+                b=self.block(copy.deepcopy(f))
+                b.width=108;b.columns=columns;b.column_height=40;b.column_gap=8
+                b.html='<p style="font-size:14pt">读到这里，慢一点。<br>在书页上直接编辑。<br><u>重点可以加下划线。</u><br>两栏文字连续流动。</p>'
+                core.local_block_path(b)
+                self.assertFalse(b.frozen_overflow)
+                self.assertFalse(core.preflight(core.Project(blocks=[b])))
+                self.assertLess(len(b.stroke_fonts[f['family']]['glyphs']),50)
 
 
 if __name__=='__main__':unittest.main()

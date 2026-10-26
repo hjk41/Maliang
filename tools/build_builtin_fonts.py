@@ -62,15 +62,6 @@ def download(url, path, expected=None):
 def source_file(item):
     extension = {'ttf':'.ttf','svg':'.svg','hanzi':'.tar.gz'}[item['kind']]
     path = CACHE/'sources'/(item['id']+extension)
-    # Reuse previously verified local research originals, without publishing them.
-    old = (PROJECT/'evidence/font-search-round2-20261025/sources'/(item['id']+'.ttf')
-           if item['kind']=='ttf' else None)
-    if item['kind']=='svg':
-        old_names={'ems-readability':'EMSReadability','ems-tech':'EMSTech','ems-neato':'EMSNeato','ems-allure':'EMSAllure'}
-        old=PROJECT/'evidence/english-fonts-20261025/sources'/(old_names[item['id']]+'.svg')
-    if not path.exists() and old and old.is_file():
-        path.parent.mkdir(parents=True,exist_ok=True)
-        path.write_bytes(old.read_bytes())
     return download(item['source_url'],path,item.get('sha256'))
 
 
@@ -269,7 +260,7 @@ def publish(item,work,ascent,descent,source,credits=''):
             shutil.copyfile(p,OUTPUT/'ARPHICPL.TXT')
     else:
         # EMS originals embed authorship and OFL declaration; retain both.
-        generic=(OUTPUT/'maoken-LICENSE.txt') if (OUTPUT/'maoken-LICENSE.txt').exists() else PROJECT/'evidence/font-search-round2-20261025/sources/maoken-OFL.txt'
+        generic=OUTPUT/'maoken-LICENSE.txt'
         if not generic.exists():
             first=next(f for f in SOURCE['fonts'] if f['id']=='maoken')
             generic=download(first['license_url'],CACHE/'sources/maoken-LICENSE.txt',first['license_sha256'])

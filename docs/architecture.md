@@ -9,7 +9,7 @@ Maliang 是本地 Python / PySide6 应用，展示名称「马良」，兼容性
 | `core.py` | 毫米文档、富文本/分栏、保护区绕排、共享笔迹、预检和项目持久化 |
 | `rectify.py` / `dewarp.py` | 照片四点透视、曲线引导与 2D 拉平 |
 | `lineart.py` / `svgimport.py` | 图片骨架/填充线和 SVG 图形的笔迹转换 |
-| `gfont.py` | 本机 v5 ZIP 字形读取；不解释加密元数据 |
+| `gfont.py` | 用户显式导入的 v5 ZIP 字形读取；不解释加密元数据 |
 | `stroke_fonts.py` | 内置字库目录、SQLite 字形懒读、来源版本与 fallback、Qt 私有度量代理 |
 | `protocol.py` / `controller.py` | 旧导入位置的兼容层；实现已迁入设备适配包 |
 | `devices/ir.py` | 毫米 XY 和抬落笔的通用有序动作，不要求 Z 轴或 G-code |

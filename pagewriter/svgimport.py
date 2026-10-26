@@ -233,7 +233,11 @@ def strokes(vector, width, fill=False, fill_cutoff=.6, fill_spacing=.5, fill_ang
 
 def parse(source):
     """SVG file path or text -> dict(lines, fills, aspect) normalised to width 1."""
-    text = source if "<svg" in str(source)[:2000] else open(source, "rb").read().decode("utf-8", "replace")
+    if "<svg" in str(source)[:2000]:
+        text = source
+    else:
+        with open(source, "rb") as handle:
+            text = handle.read().decode("utf-8", "replace")
     root = ET.fromstring(text)
     if _tag(root) != "svg":
         raise ValueError("不是 SVG 文件")

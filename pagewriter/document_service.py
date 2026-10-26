@@ -7,16 +7,24 @@ from __future__ import annotations
 import copy
 import hashlib
 import json
+import math
 import uuid
 from dataclasses import fields as dataclass_fields
 from html import escape
 from pathlib import Path
 
-from PySide6.QtCore import QPointF
+from PySide6.QtCore import QPointF, Qt
 from PySide6.QtGui import QImageReader, QTransform
 
 from . import core, stroke_fonts
 from .service_errors import ServiceError, fields, number
+
+
+DRAWING_FIELDS = {'x_mm': 'x', 'y_mm': 'y', 'width_mm': 'width',
+    'rotation_degrees': 'rotation', 'threshold': 'threshold', 'detail': 'detail',
+    'min_stroke_mm': 'min_stroke', 'fill': 'fill', 'fill_cutoff': 'fill_cutoff',
+    'fill_spacing_mm': 'fill_spacing', 'fill_angle_degrees': 'fill_angle',
+    'fill_levels': 'fill_levels', 'fill_min_width_mm': 'fill_min_width'}
 
 
 def geometry_identity(project):
@@ -113,6 +121,8 @@ class DocumentService:
             self.window.project = project
             if selected_id is not None:
                 self.window.selected_id = selected_id
+            elif getattr(self.window, 'selected_id', None) not in ids:
+                self.window.selected_id = ''
             self.window.refresh()
         else:
             self.undo_stack.append(copy.deepcopy(self.project))
@@ -215,11 +225,24 @@ class DocumentService:
         return {'revision': self.revision, 'width_mm': project.width, 'height_mm': project.height,
                 'pen_width_mm': project.pen_width, 'margin_mm': project.margin,
                 'blocks': blocks, 'zones': [{'id': z.id, 'name': z.name, 'kind': z.kind, 'points_mm': z.points} for z in project.zones],
-                'drawings': [{'id': d.id, 'name': d.name, 'x_mm': d.x, 'y_mm': d.y, 'width_mm': d.width,
-                              'rotation_degrees': d.rotation} for d in project.drawings],
+                'drawings': [self._drawing_info(d) for d in project.drawings],
                 'photo': {'present': bool(project.image_data), 'quad': project.image_quad,
                           'edges': project.image_edges, 'guides': project.image_guides,
                           'opacity': project.image_opacity, 'offset_mm': project.image_offset}}
+
+    def _drawing_info(self, drawing):
+        from . import lineart
+        paths = core.drawing_strokes(drawing)
+        ink = sum(lineart.length(path) for path in paths)
+        travel = sum(math.dist(a[-1], b[0]) for a, b in zip(paths, paths[1:]))
+        return {'id': drawing.id, 'name': drawing.name,
+                **{key: getattr(drawing, attr) for key, attr in DRAWING_FIELDS.items()},
+                'height_mm': drawing.height, 'source_type': 'svg' if drawing.vector else 'image',
+                'erase_circles_mm': [[u*drawing.width, v*drawing.width, r*drawing.width]
+                                     for u, v, r in drawing.erase],
+                'stats': {**drawing.stats, 'strokes': len(paths), 'ink_mm': ink, 'travel_mm': travel,
+                          'seconds': ink/lineart.WRITE_FEED*60 + travel/lineart.TRAVEL_FEED*60
+                                     + len(paths)*lineart.PEN_CYCLE_S}}
 
     def _set_runs(self, block, runs):
         if not isinstance(runs, list) or not 1 <= len(runs) <= 10000:
@@ -249,12 +272,13 @@ class DocumentService:
         block.stroke_fonts = fonts
         block.frozen_key = ''; block.frozen_path = []; block.fonts = []
 
-    def _image(self, path):
+    def _image(self, path, auto_transform=False):
         path = self.path(path)
         self.protected_paths.add(path)
         if path.stat().st_size > 40_000_000:
             raise ServiceError('INVALID_ARGUMENT', '图片文件过大')
         reader = QImageReader(str(path))
+        reader.setAutoTransform(auto_transform)
         size = reader.size()
         if not size.isValid() or size.width() * size.height() > 40_000_000:
             raise ServiceError('INVALID_ARGUMENT', '图片尺寸无效或过大')
@@ -262,6 +286,28 @@ class DocumentService:
         if image.isNull():
             raise ServiceError('INVALID_ARGUMENT', '无法读取图片')
         return image
+
+    def _import_drawing(self, path):
+        path = self.path(path)
+        self.protected_paths.add(path)
+        if path.suffix.lower() == '.svg':
+            from xml.etree.ElementTree import ParseError
+            from . import svgimport
+            if path.stat().st_size > 4_000_000:
+                raise ServiceError('INVALID_ARGUMENT', 'SVG 文件过大')
+            try:
+                drawing = core.Drawing(vector=svgimport.parse(path))
+            except (ValueError, ParseError, RecursionError) as exc:
+                raise ServiceError('INVALID_ARGUMENT', '无法读取 SVG 图画') from exc
+        else:
+            image = self._image(path, auto_transform=True)
+            if max(image.width(), image.height()) > 1600:
+                image = image.scaled(1600, 1600, Qt.AspectRatioMode.KeepAspectRatio,
+                                     Qt.TransformationMode.SmoothTransformation)
+            drawing = core.Drawing(image_data=core.image_to_data(image))
+        drawing.id = uuid.uuid4().hex
+        drawing.name = path.stem[:30] or '图画'
+        return drawing
 
     def _photo(self, project, op):
         if 'path' in op:
@@ -297,7 +343,7 @@ class DocumentService:
         if not isinstance(operations, list) or not 1 <= len(operations) <= 1000:
             raise ServiceError('INVALID_ARGUMENT', 'operations 需要1到1000项')
         project = copy.deepcopy(self.project)
-        selected, added = None, []
+        selected, added, changed_drawings = None, [], set()
         text_fields = {'id', 'name', 'x_mm', 'y_mm', 'width_mm', 'rotation_degrees', 'runs',
                        'columns', 'column_height_mm', 'column_gap_mm', 'column_separators', 'avoid_zones'}
         geometry_fields = {'x_mm': 'x', 'y_mm': 'y', 'width_mm': 'width', 'rotation_degrees': 'rotation',
@@ -337,6 +383,44 @@ class DocumentService:
                     if key in op:
                         setattr(zone, attr, copy.deepcopy(op[key]))
                 selected = zone.id
+            elif kind in ('import_drawing', 'update_drawing', 'erase_drawing', 'restore_drawing'):
+                if kind == 'import_drawing':
+                    fields(op, {'path', 'id', 'name', *DRAWING_FIELDS}, {'path'})
+                    drawing = self._import_drawing(op['path'])
+                    drawing.width = min(50., project.width/2)
+                    drawing.x = (project.width-drawing.width)/2
+                    drawing.y = project.height*.3
+                    if 'id' in op:
+                        drawing.id = op['id']
+                    project.drawings.append(drawing); added.append(drawing.id)
+                else:
+                    allowed = {'id', 'name', *DRAWING_FIELDS} if kind == 'update_drawing' else (
+                        {'id', 'circles_mm'} if kind == 'erase_drawing' else {'id'})
+                    fields(op, allowed, {'id', 'circles_mm'} if kind == 'erase_drawing' else {'id'})
+                    drawing = next((d for d in project.drawings if d.id == op['id']), None)
+                    if drawing is None:
+                        raise ServiceError('NOT_FOUND', '图画对象不存在')
+                if kind in ('import_drawing', 'update_drawing'):
+                    for key, attr in DRAWING_FIELDS.items():
+                        if key in op:
+                            setattr(drawing, attr, op[key])
+                    if 'name' in op:
+                        drawing.name = op['name']
+                elif kind == 'erase_drawing':
+                    circles = op['circles_mm']
+                    if not isinstance(circles, list) or not 1 <= len(circles) <= 20000:
+                        raise ServiceError('INVALID_ARGUMENT', '擦除需要1到20000个圆')
+                    for circle in circles:
+                        if not isinstance(circle, (list, tuple)) or len(circle) != 3:
+                            raise ServiceError('INVALID_ARGUMENT', '擦除圆须为 [x, y, radius]')
+                        x, y, radius = (number(value, 'circle') for value in circle)
+                        if not 0 < radius <= drawing.width:
+                            raise ServiceError('INVALID_ARGUMENT', '擦除半径须大于0且不超过图画宽度')
+                        drawing.erase.append([x/drawing.width, y/drawing.width, radius/drawing.width])
+                else:
+                    drawing.erase = []
+                selected = drawing.id
+                changed_drawings.add(drawing.id)
             elif kind == 'remove':
                 fields(op, {'id'}, {'id'})
                 found = False
@@ -360,5 +444,14 @@ class DocumentService:
                 project.image_offset = [0., 0.]
             else:
                 raise ServiceError('INVALID_ARGUMENT', '未知文档操作', {'op': kind})
+        # Convert staged drawings before changing the live editor or its undo
+        # stack. Bad sources/settings must roll back the entire batch.
+        if changed_drawings:
+            core._validate_project(project)
+            for drawing in project.drawings:
+                if drawing.id in changed_drawings:
+                    core.drawing_local_paths(drawing)
+        if selected not in {o.id for o in [*project.blocks, *project.zones, *project.drawings]}:
+            selected = None
         self._commit(project, selected)
         return {'revision': self.revision, 'added_ids': added}

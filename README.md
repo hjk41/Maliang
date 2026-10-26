@@ -18,7 +18,7 @@
 - **便携项目**：`.pagewriter` 保存底图、样式及使用过的笔迹；导出毫米 SVG。底图不进入书写输出。
 - **九款离线内置单线字体**：四款中文转换字库、Hanzi Writer 笔顺楷备选和四款 EMS 英文字体，无需安装厂商软件。支持中英混排和局部换字体。
 - **机型适配层**：通用笔迹动作、驱动和机型配置分离；支持显式加载 Grbl 型号 JSON，以及不使用 Z 轴的离线舵机模拟器。
-- **Agent 接口**：GUI 与本机 JSON API、CLI、MCP 共享文档、预检与作业状态，支持结构化混排、预览图、版本冲突检测和持久幂等启动。
+- **Agent 接口**：GUI 与本机 JSON API、CLI、MCP 共享文档、预检与作业状态，支持结构化混排、图片描线、灰度排线、SVG 导入、图画编辑与擦除；修改同步刷新画布并可撤销，支持预览图、版本冲突检测和持久幂等启动。
 
 目前为 **0.7.0 实验版**，主要支持 Windows。历史版本已在颂博士 2024 款 / BtWriter 控制器上做过废纸方框和文字试写。本轮重构使用假串口和模拟器验收；新版向导、曲面处理与真实书页定位尚需实机验收，通用 Grbl 配置不代表其他型号已验证。详细边界见 [验证说明](docs/verification.md)。
 
@@ -37,7 +37,7 @@ py -3.12 -m venv .venv
 
 也可以双击 `start_maliang.cmd`，或用 `.venv\Scripts\python.exe main.py` 启动源码。程序从空白页面开始；「更多 → 打开分栏示例」提供离线排版示例。
 
-**已内置九款可离线书写的单线字体。** 中文来源为猫啃硬笔楷书、霞鹜文楷 GB、小赖、悠哉，另有 Hanzi Writer 备选；英文为 EMS Readability / Tech / Neato / Allure。转换字体使用马良衍生名称，原作者和字体名保留在来源说明中。完整字符覆盖、许可与构建方法见[内置字体](docs/builtin-fonts.md)。系统字体仍可用于轮廓预览，也可导入自己有权使用的单线 `.gfont`；已有厂商字体仅从本机读取。
+**已内置九款可离线书写的单线字体。** 中文来源为猫啃硬笔楷书、霞鹜文楷 GB、小赖、悠哉，另有 Hanzi Writer 备选；英文为 EMS Readability / Tech / Neato / Allure。转换字体使用马良衍生名称，原作者和字体名保留在来源说明中。完整字符覆盖、许可与构建方法见[内置字体](docs/builtin-fonts.md)。系统字体仍可用于轮廓预览，也可主动导入自己有权使用的单线 `.gfont`；程序不扫描厂商软件的安装目录。
 
 Windows 可能需要设备厂商提供的 CH340 USB 串口驱动。先断开其他程序对串口的占用，再在马良中连接。连接不会自动运动或回零。
 
@@ -54,6 +54,8 @@ Windows 可能需要设备厂商提供的 CH340 USB 串口驱动。先断开其�
 ## Agent 与机型配置
 
 桌面版打开「更多 → Agent 接口」，选定工作目录后启用。可直接复制 MCP 配置，Agent 编辑的内容会显示在当前页面中并支持撤销。实机操作须先在书写向导完成定位、笔高和范围确认，再授予本次范围权限；首次测试可选离线舵机模拟器。
+
+需要边调用边看 GUI 时，返回编辑画布并让 CLI/MCP 使用该窗口提供的连接文件；下方独立 `serve` 命令会创建自己的无窗口文档，不会接管已打开的编辑器。
 
 无界面的本机服务与命令行：
 
@@ -72,12 +74,12 @@ Windows 可能需要设备厂商提供的 CH340 USB 串口驱动。先断开其�
 ```powershell
 .venv\Scripts\python.exe -m pip install -e ".[dev,agent]"
 .venv\Scripts\python.exe tools\check_repository.py
-.venv\Scripts\python.exe -m unittest discover -s tests -v
+.venv\Scripts\python.exe tools\run_tests.py
 .venv\Scripts\python.exe -m build
 .venv\Scripts\python.exe -m PyInstaller --noconfirm --clean maliang.spec
 ```
 
-Windows 测试使用原生 Qt，**不要设置 `QT_QPA_PLATFORM=offscreen`**。自动测试用假串口，不驱动真实设备；本机厂商字体/个人照片的可选测试会在文件缺失时跳过。`--smoke` 会打开窗口并在约 0.8 秒后退出。
+Windows 测试使用原生 Qt，**不要设置 `QT_QPA_PLATFORM=offscreen`**。测试素材全部来自仓库资源或测试源码生成的原创几何、字体和页面；不需要厂商字库或个人照片。自动测试用假串口，不驱动真实设备。完整验收使用 `tools/run_tests.py`，任何跳过项都会导致验收失败，缺少资源不能静默略过。`--smoke` 会打开窗口并在约 0.8 秒后退出。
 
 EXE 输出在 `dist/Maliang/`：`Maliang.exe` 为桌面版，`MaliangAgent.exe` 为命令行/MCP 入口，二者共用 `_internal`，分发时需要整个文件夹。也可运行 `build_exe.cmd`。CI 测试 Python 3.12/3.13、安装 wheel 后从仓库外验收 API/MCP 和模拟作业，再打包双入口并重复独立验收。主分支构建在 Actions artifacts 下载；版本标签 `v*` 可触发独立的测试、打包和 GitHub Release 流程。
 

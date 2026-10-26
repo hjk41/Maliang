@@ -72,7 +72,8 @@ executing may finish, so inspect state before retrying a mutation. Use the same
 `request_id` to retry `job.start` safely.
 
 Document edits use operation `op` values `add_text`, `update_text`, `remove`,
-`add_zone`, `update_zone`, `page`, `import_photo`, `photo`, and `remove_photo`. Use font IDs from
+`add_zone`, `update_zone`, `page`, `import_photo`, `photo`, `remove_photo`,
+`import_drawing`, `update_drawing`, `erase_drawing`, and `restore_drawing`. Use font IDs from
 `fonts.list`, millimetres for geometry, points for type size, and the revision
 from `document.get`. Undo/redo also require `expected_revision`.
 `document.export` supports SVG and `.pagewriter`. Preview rendering returns a PNG
@@ -101,6 +102,59 @@ controller. Document edits and new device/motion commands wait while an operator
 dialog or IME composition is active; pause/cancel controls remain available.
 Native operator-only confirmation binds the inspected document/session/position
 to a correlated successful range authorization before granting Agent motion.
+
+### Drawing and live GUI editing
+
+To see Agent edits in the editor, enable **More → Agent interface** in that
+window, return to the editor, and use its connection file for both CLI and MCP.
+The standalone `serve` command owns a separate document without a visible window;
+connecting to that session does not update another running editor.
+
+`document.apply` commits on the GUI thread. A successful edit immediately refreshes
+the canvas, object list, selected drawing's controls and preflight results, marks
+the project modified, and adds one undo step for the entire batch. Native edits
+and undo/redo update the same revision. While a modal dialog, IME composition,
+mouse gesture, pending drawing slider change or eraser gesture is active, a
+mutation returns `GUI_BUSY`; finish that interaction and read `document.get`
+again before retrying.
+
+Drawing operations reuse the GUI's raster skeleton tracing, grayscale hatching,
+SVG vector importer and non-destructive eraser:
+
+- `import_drawing`: `path` to an image or SVG in the workspace; optional `id`,
+  `name`, placement and conversion settings. SVG keeps its vector geometry.
+  Raster images follow the GUI's EXIF rotation and 1600-pixel storage limit.
+  Sources remain protected from export overwrites. SVG input is limited to 4 MB;
+  raster input is limited to 40 MB and 40 million pixels before decoding.
+- `update_drawing`: `id` plus any placement/conversion settings. Placement uses
+  `x_mm`, `y_mm`, `width_mm`, `rotation_degrees`. Conversion uses `threshold`
+  (1–255), `detail` (source pixels), `min_stroke_mm`, `fill`, `fill_cutoff`
+  (darkness 0–1), `fill_spacing_mm`, `fill_angle_degrees`, `fill_levels` (1–4),
+  and `fill_min_width_mm`. SVG uses its original lines; raster threshold/detail
+  settings do not retrace SVG. Existing erasures survive setting changes.
+- `erase_drawing`: `id` and `circles_mm`, a list of `[x, y, radius]` circles.
+  Coordinates are local to the drawing's top-left corner before its rotation,
+  in millimetres at the current width. The stored erasure scales with the drawing.
+  Radius must be positive and no larger than its width; at most 20,000 erased
+  circles may be stored per drawing.
+- `restore_drawing`: `id`; restore all erased strokes. `remove` deletes a drawing.
+
+`document.get` returns drawing type, dimensions, all conversion settings,
+`erase_circles_mm` and effective stroke statistics after erasure, without embedding source-image blobs.
+Imported/edited drawings participate in preview, project save/open, SVG export,
+preflight and jobs. Invalid sources/settings roll back the whole edit batch.
+
+For example, pass this UTF-8 JSON file to `call document.apply --file edits.json`,
+or use the same object as MCP arguments. Read the actual `expected_revision`
+from `document.get` first:
+
+```json
+{"expected_revision":1,"operations":[
+  {"op":"import_drawing","id":"figure","path":"figure.svg","x_mm":20,"y_mm":30,"width_mm":40},
+  {"op":"update_drawing","id":"figure","fill":true,"fill_spacing_mm":0.6,"fill_levels":3},
+  {"op":"erase_drawing","id":"figure","circles_mm":[[10,8,1.5]]}
+]}
+```
 
 ## MCP stdio
 

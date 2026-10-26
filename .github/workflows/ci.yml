@@ -42,7 +42,7 @@ jobs:
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force test-results | Out-Null
-          python -m unittest discover -s tests -v 2>&1 | Tee-Object test-results/unittest.log
+          python tools/run_tests.py 2>&1 | Tee-Object test-results/unittest.log
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Audit all built-in glyphs and font metrics
         run: python tools/check_builtin_fonts.py

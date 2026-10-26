@@ -33,12 +33,6 @@ from .core import (TextBlock, ExclusionZone, Project, build_block_path, prefligh
 
 BLUE = QColor("#245cad")
 RED = QColor("#db5965")
-VENDOR_FONT_DIR = Path(r"C:\Program Files (x86)\写字机软件\gcodeFonts")
-VENDOR_FONTS = [("快写（推荐）", "超连笔快写-3500字_kvenjoy_gantry.gfont"),
-                ("快写 · 完整字库", "超连笔快写_kvenjoy_gantry.gfont"),
-                ("乐行书", "乐行书_kvenjoy_乐乐.gfont"),
-                ("乐行书 2", "乐行书2_kvenjoy_乐乐.gfont"),
-                ("楷书 · 田英章", "田英章楷书_kvenjoy_瑞瑞.gfont")]
 
 
 def ink_pen(color, width):
@@ -996,7 +990,7 @@ class MainWindow(QMainWindow):
         underline_action.setShortcut("Ctrl+U")
         underline_action.triggered.connect(lambda checked=False:self.apply_underline())
         self.addAction(underline_action)
-        self.populate_vendor_fonts()
+        self.populate_stroke_fonts()
 
         self.editor = WritingEdit(self)
         self.editor.setAcceptRichText(False)
@@ -1301,16 +1295,12 @@ class MainWindow(QMainWindow):
         self.canvas.ensureVisible(self.job_area_item)
         QApplication.processEvents()
 
-    def populate_vendor_fonts(self):
-        """Built-ins are available on a clean install; optional local fonts follow."""
+    def populate_stroke_fonts(self):
+        """Only bundled repository fonts are discovered automatically."""
         for descriptor in builtin_fonts.descriptors():
             self.stroke_fonts.addItem(descriptor['name'], descriptor)
             index = self.stroke_fonts.count() - 1
             self.stroke_fonts.setItemData(index, '内置单线字体 · 来源：' + descriptor.get('source_name', ''), Qt.ItemDataRole.ToolTipRole)
-        for label,filename in VENDOR_FONTS:
-            path = VENDOR_FONT_DIR / filename
-            if path.is_file():
-                self.stroke_fonts.addItem(label,{"path":str(path),"name":label,"pending":True})
 
     def load_stroke_font(self, index):
         descriptor = self.stroke_fonts.itemData(index)

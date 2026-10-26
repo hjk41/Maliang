@@ -25,6 +25,20 @@ TEXT = {"id": STR, "name": STR, "x_mm": NUM, "y_mm": NUM, "width_mm": NUM,
         "rotation_degrees": NUM, "avoid_zones": BOOL}
 ZONE = {"id": STR, "name": STR, "kind": {"enum": ["ink", "obstacle"]},
         "points_mm": {"type": "array", "items": POINT, "minItems": 3}}
+DRAWING = {"id": STR, "name": STR, "x_mm": NUM, "y_mm": NUM,
+           "width_mm": {"type": "number", "minimum": 1, "maximum": 2000},
+           "rotation_degrees": NUM,
+           "threshold": {"type": "integer", "minimum": 1, "maximum": 255},
+           "detail": {"type": "number", "minimum": 0, "maximum": 20},
+           "min_stroke_mm": {"type": "number", "minimum": 0, "maximum": 50},
+           "fill": BOOL,
+           "fill_cutoff": {"type": "number", "minimum": 0, "maximum": 1},
+           "fill_spacing_mm": {"type": "number", "minimum": 0.1, "maximum": 20},
+           "fill_angle_degrees": NUM,
+           "fill_levels": {"type": "integer", "minimum": 1, "maximum": 4},
+           "fill_min_width_mm": {"type": "number", "minimum": 0, "maximum": 50}}
+ERASE_CIRCLE = {"type": "array", "items": NUM, "minItems": 3, "maxItems": 3,
+               "description": "[x, y, radius] in drawing-local millimetres, before rotation."}
 PHOTO = {"quad": {"anyOf": [QUAD, {"type": "null"}]},
          "edges": {"anyOf": [obj({side: {"type": "array", "items": POINT, "maxItems": 5}
                        for side in ("top", "right", "bottom", "left")}), {"type": "null"}]},
@@ -44,6 +58,12 @@ OPERATIONS = {"type": "array", "minItems": 1, "maxItems": 1000, "items": {"oneOf
     operation("remove", {"id": STR}, ("id",)),
     operation("add_zone", ZONE, ("kind", "points_mm")),
     operation("update_zone", ZONE, ("id",)),
+    operation("import_drawing", {"path": STR, **DRAWING}, ("path",)),
+    operation("update_drawing", DRAWING, ("id",)),
+    operation("erase_drawing", {"id": STR, "circles_mm": {
+        "type": "array", "items": ERASE_CIRCLE, "minItems": 1, "maxItems": 20000}},
+        ("id", "circles_mm")),
+    operation("restore_drawing", {"id": STR}, ("id",)),
     operation("page", {"width_mm": NUM, "height_mm": NUM,
                        "pen_width_mm": NUM, "margin_mm": NUM}),
     operation("import_photo", {"path": STR, **PHOTO}, ("path",)),
@@ -63,7 +83,7 @@ TOOLS = {
     "document.new": spec("Create a blank document.", {"width_mm": NUM, "height_mm": NUM, "expected_revision": INT}),
     "document.open": spec("Open a document inside the allowed workspace.", {"path": STR, "expected_revision": INT}, ("path",)),
     "document.save": spec("Save the current document inside the workspace.", {"path": STR}),
-    "document.apply": spec("Atomically apply structured document operations at the expected revision.",
+    "document.apply": spec("Atomically edit text, zones, photos and raster/SVG drawings, including hatching and erasure; attached GUI updates immediately.",
                            {"operations": OPERATIONS, "expected_revision": INT},
                            ("operations", "expected_revision")),
     "document.undo": spec("Undo a document edit.", {"expected_revision": INT}, ("expected_revision",)),

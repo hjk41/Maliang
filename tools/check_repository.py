@@ -1,5 +1,6 @@
 """Audit Git's publication set or a built wheel/sdist, never local user files."""
 import argparse
+import ast
 import json
 import re
 import subprocess
@@ -13,6 +14,29 @@ PRIVATE_DOC = re.compile(r"^docs/(?:local-|kenjoy-|photo-acceptance-|handoff-202
 HOME_PATH = re.compile(rb"[A-Za-z]:[\\/]+Users[\\/]+(?!Public(?:[\\/]|$))[^\\/\s\"']+", re.I)
 
 
+def material_dependencies(data):
+    """Reject literal machine paths and access to private research asset trees."""
+    problems = set()
+    for node in ast.walk(ast.parse(data)):
+        if isinstance(node, ast.Call) and node.args:
+            func = node.func
+            is_path = (isinstance(func, ast.Name) and func.id == 'Path') or (
+                isinstance(func, ast.Attribute) and func.attr in ('Path', 'joinpath'))
+            if is_path:
+                for value in node.args:
+                    if isinstance(value, ast.Constant) and isinstance(value.value, str):
+                        path = value.value.replace('\\', '/')
+                        if (path.startswith('/') or re.match(r'^[a-zA-Z]:/', path)
+                                or 'gcodefonts' in path.casefold()
+                                or any(part in {'pics', 'evidence'} for part in path.split('/'))):
+                            problems.add('hardcoded external material path')
+        if (isinstance(node, ast.BinOp) and isinstance(node.op, ast.Div)
+                and isinstance(node.right, ast.Constant) and isinstance(node.right.value, str)
+                and any(part in {'pics', 'evidence'} for part in node.right.value.replace('\\', '/').split('/'))):
+            problems.add('private material directory dependency')
+    return sorted(problems)
+
+
 def check(name, data):
     name = name.replace("\\", "/")
     errors = []
@@ -23,6 +47,8 @@ def check(name, data):
     if name.endswith((".py", ".md", ".json", ".toml", ".pagewriter", ".yml", ".cmd", ".spec")):
         if HOME_PATH.search(data):
             errors.append("private Windows home path")
+    if name.endswith('.py') and name.startswith(('pagewriter/', 'tests/', 'tools/')):
+        errors.extend(material_dependencies(data))
     if name.endswith(".pagewriter"):
         project = json.loads(data.decode("utf-8-sig"))["project"]
         for block in project.get("blocks", []):
@@ -45,10 +71,14 @@ def entries(archive):
                         # Source archives have a versioned top-level directory.
                         yield member.name.split("/", 1)[-1], handle.extractfile(member).read()
     else:
-        # Cached + staged paths are exactly what can go into the next commit.
-        names = subprocess.check_output(["git", "ls-files", "--cached", "-z"]).decode().split("\0")
-        for name in filter(None, names):
-            yield name, Path(name).read_bytes()
+        # Audit tracked and unignored new files, including changes not staged
+        # yet. An intentional working-tree deletion has no bytes to publish.
+        names = subprocess.check_output(["git", "ls-files", "--cached", "--others",
+                                         "--exclude-standard", "-z"]).decode().split("\0")
+        for name in sorted(set(filter(None, names))):
+            path = Path(name)
+            if path.is_file():
+                yield name, path.read_bytes()
 
 
 def main():

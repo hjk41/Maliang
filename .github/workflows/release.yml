@@ -31,7 +31,7 @@ jobs:
           python -c "import os; from pagewriter import __version__; assert os.environ['RELEASE_TAG'] == 'v'+__version__"
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           python tools/check_repository.py
-      - run: python -m unittest discover -s tests -v
+      - run: python tools/run_tests.py
       - run: python tools/check_builtin_fonts.py
       - name: Build packages
         run: python -m build
