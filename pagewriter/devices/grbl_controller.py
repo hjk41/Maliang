@@ -13,7 +13,7 @@ import uuid
 from collections import deque
 from .profiles import get_profile
 from .transport import SerialTransport
-from .base import validate_job_context, validate_motion_lease
+from .base import validate_job_context, validate_motion_lease, PEN_CALIBRATION_STROKE_MM
 from .grbl_protocol import LineParser, JobSession, MachineProfile, compile_machine_job
 
 
@@ -60,6 +60,7 @@ class GrblController:
         self.motion_finish=clock(); self.planned_position=None; self.planned_feed=None
         self.pause_started=None; self.hold_deadline=None
         self.completion_deadline=None; self.next_final_poll=0.; self.final_poll_interval=.25
+        self.pen_calibration=None
 
     def _command_deadline(self,line,now):
         """Budget accepted but unfinished motion, never merely the next serial ACK.
@@ -123,7 +124,9 @@ class GrblController:
                 points_count=len(self.points),anchor_available=self.anchor_mapping is not None,clearance=self.clearance,idle=self.status_state=='Idle',
                 page_to_machine=self.mapping,clearance_bounds=self._clearance_bounds(),
                 clearance_remaining=self._clearance_remaining(),mapping_preset=self.mapping_preset,
-                anchor_preset_source=self.anchor_preset_source)
+                anchor_preset_source=self.anchor_preset_source,
+                pen_calibration=({key:self.pen_calibration[key] for key in ('id','phase','up','down')}
+                                 if self.pen_calibration else None))
 
     def _clearance_bounds(self):
         if self.clearance_center is None or self.clearance is None: return None
@@ -151,6 +154,7 @@ class GrblController:
             except Exception: pass  # Observers cannot interrupt the transport FSM.
 
     def _invalidate(self, preserve_axes=False):
+        self.pen_calibration=None
         if preserve_axes:
             self.anchor_preset_source=self.mapping_preset if self.mapping is not None else self.anchor_preset_source
         else:
@@ -218,7 +222,7 @@ class GrblController:
         if action=='disconnect': return self._disconnect()
         if not self.serial: raise ValueError('Disconnected')
         if action=='poll':
-            if self.job and self.state not in {'paused','pausing'}: return
+            if self.state=='calibrating' or (self.job and self.state not in {'paused','pausing'}): return
             return self._query()
         if action=='stop':
             self.pause_started=self.hold_deadline=None
@@ -242,13 +246,50 @@ class GrblController:
             self.motion_finish+=elapsed; self.pause_started=self.hold_deadline=None
             self._write(b'~'); self.state='running'; return
         if action=='geometry_changed':
+            if self.state=='calibrating': self._fault('Page geometry changed during pen calibration')
             if self.job: self._fault('Page geometry changed during job')
             self.geometry_id=kw['geometry_id']; self._invalidate(); return
         if action=='manual_reposition':
-            if self.job or self.pending or self.lines: raise ValueError('Drain commands and stop job before manual reposition')
+            if self.state=='calibrating' or self.job or self.pending or self.lines: raise ValueError('Drain commands and stop job before manual reposition')
             self._invalidate(preserve_axes=True); self.clearance=self.clearance_center=None
             self._emit('warning','Manual movement is not measured by the controller; inspect and declare clearance again'); return
         pos=self._fresh()
+        if self.pen_calibration and (
+                (self.pen_calibration['phase']=='inspect' and action not in {'calibrate_pen','confirm_pen_calibration'})
+                or action in {'capture_pen','set_pen_stroke','set_pen_touch'}):
+            self.pen_calibration=None
+        if action=='calibrate_pen':
+            direction=kw.get('direction'); calibration_id=kw.get('calibration_id')
+            if (kw.get('confirmed') is not True or type(direction) is not int or direction not in (-1,1)
+                    or not isinstance(calibration_id,str) or not calibration_id.strip() or len(calibration_id)>128):
+                raise ValueError('Confirmed 5 mm pen calibration and direction +/-1 required')
+            if self.pen_calibration and self.pen_calibration['id']==calibration_id:
+                raise ValueError('Pen calibration request already used')
+            if not self.clearance: raise ValueError('Declare inspected clearance first')
+            distance=direction*PEN_CALIBRATION_STROKE_MM
+            target=(pos[0],pos[1],pos[2]+distance)
+            if any(not lo<=v<=hi for v,(lo,hi) in zip(target,self._clearance_bounds())):
+                raise ValueError('Pen calibration exceeds inspected Z envelope')
+            self.pen_up=self.pen_down=self.pen_touch=None
+            self.profile=None; self.authorization_id=None
+            self.pen_calibration=dict(id=calibration_id,phase='lowering',up=pos[2],down=target[2],origin=tuple(pos))
+            self.state='calibrating'; self.jog_target=target; self.coordinate_time=-math.inf
+            self.next_final_poll=0.
+            self.travel=[v-c for v,c in zip(target,self.clearance_center)]
+            self.lines.append(f'$J=G21 G91 Z{distance:.4f} F30.000')
+            self._emit('pen_calibration_progress',calibration_id=calibration_id,phase='lowering'); return
+        if action=='confirm_pen_calibration':
+            calibration=self.pen_calibration
+            if (not calibration or calibration['phase']!='inspect' or
+                    kw.get('calibration_id')!=calibration['id'] or
+                    any(abs(a-b)>.05 for a,b in zip(pos,calibration['origin']))):
+                raise ValueError('Pen calibration result is stale; run calibration again')
+            if kw.get('confirmed') is not True:
+                raise ValueError('Pen calibration requires visual confirmation of the dot and intact paper')
+            self.pen_up,self.pen_down=calibration['up'],calibration['down']
+            self.pen_touch=None  # No contact sensor: never claim a measured surface.
+            self.profile=None; self.authorization_id=None; calibration['phase']='confirmed'
+            self._emit('pen_calibration_confirmed',calibration_id=calibration['id']); return
         if action=='declare_clearance':
             xy,z=float(kw['xy_mm']),float(kw['z_mm'])
             if not (0<xy<=10 and 0<z<=5): raise ValueError('Inspected clearance maximum XY 10mm, Z 5mm')
@@ -410,6 +451,7 @@ class GrblController:
             if self.wco is not None and newco!=self.wco:
                 self._invalidate()
                 self.clearance=self.clearance_center=None
+                if self.state=='calibrating': self._fault('WCO changed during pen calibration'); return
                 if self.job: self._fault('WCO changed during job'); return
             self.wco=newco
         if 'WPos' in event.fields:
@@ -425,6 +467,20 @@ class GrblController:
                 self._fault('Jog endpoint does not match requested position'); return
             self.jog_target=None
             self.motion_finish=self.clock()
+            if self.state=='calibrating' and self.pen_calibration:
+                calibration=self.pen_calibration
+                self.completion_deadline=None
+                if calibration['phase']=='lowering':
+                    calibration['phase']='lifting'
+                    self.jog_target=calibration['origin']; self.coordinate_time=-math.inf
+                    distance=calibration['up']-calibration['down']
+                    self.lines.append(f'$J=G21 G91 Z{distance:.4f} F120.000')
+                    self.travel=[v-c for v,c in zip(self.jog_target,self.clearance_center)]
+                    self._emit('pen_calibration_progress',calibration_id=calibration['id'],phase='lifting')
+                else:
+                    calibration['phase']='inspect'; self.state='ready'
+                    self.last_poll=self.clock()
+                    self._emit('pen_calibration_ready',calibration_id=calibration['id'])
         if self.state=='pausing' and event.fields['state']=='Hold:0': self.state='paused'; self.hold_deadline=None
         if self.job and self.final_query and fresh_query and self.status_state=='Idle':
             self.job=False; self.state='complete'; self.final_query=False
@@ -436,7 +492,8 @@ class GrblController:
     # for a few ms every 0.5 s; such actions wait for its reply (in order)
     # instead of being rejected, then run with all their normal checks.
     WAIT_FOR_STATUS = {'jog','lift_pen','lower_pen','declare_clearance','capture_point','fit_calibration','anchor',
-                       'anchor_preset','capture_pen','set_pen_stroke','set_pen_touch','authorize','start_job'}
+                       'anchor_preset','capture_pen','set_pen_stroke','set_pen_touch','authorize','start_job',
+                       'calibrate_pen','confirm_pen_calibration'}
     STATUS_WAIT_TICKS = 200  # about 2 s at the worker's 10 ms loop
 
     def tick(self):
@@ -453,7 +510,7 @@ class GrblController:
                         self._deferred.append((action,{**kw,'_waited':waited+1})); continue
                     kw={k:v for k,v in kw.items() if k!='_waited'}
                     try: self._action(action,kw)
-                    except (ValueError,TypeError,KeyError) as exc: self._emit('rejected',str(exc),action=action,job_id=kw.get('job_id',self.current_job_id),authorization_id=kw.get('authorization_id'))
+                    except (ValueError,TypeError,KeyError) as exc: self._emit('rejected',str(exc),action=action,job_id=kw.get('job_id',self.current_job_id),authorization_id=kw.get('authorization_id'),calibration_id=kw.get('calibration_id'))
                 if not self.serial: return
                 n=self.transport.in_waiting
                 if n:
@@ -468,10 +525,16 @@ class GrblController:
                     if self.state in {'pausing','paused'} and not self.status_wait and not self.parser.buffer and now-self.last_poll>.5:
                         self._query(); self.last_poll=now
                     return
+                if self.state=='calibrating' and self.pending is not None:
+                    return  # Only an after-ACK status query may advance the dot test.
                 if self.pending is None and self.lines:
                     line=self.lines.popleft(); deadline=self._command_deadline(line,now)
                     self._write(line.encode('ascii')+b'\n'); self.pending=(line,deadline)
+                    if self.state=='calibrating': self.completion_deadline=deadline
                     if self.job: self.sent+=1
+                elif self.pending is None and self.state=='calibrating':
+                    if not self.status_wait and not self.parser.buffer and now>=self.next_final_poll:
+                        self._query(); self.next_final_poll=now+self.final_poll_interval
                 elif self.pending is None and self.job:
                     if not self.barrier:
                         self._write(b'G4 P0\n'); self.pending=('G4 P0',self._command_deadline('G4 P0',now))

@@ -7,6 +7,8 @@ import math
 import threading
 import time
 
+PEN_CALIBRATION_STROKE_MM = 5.0
+
 
 class RuntimeMotionLease:
     """Nonpersistent worker fence; only scope lifetime, no Qt or document access."""

@@ -24,9 +24,9 @@ class PanelTest(unittest.TestCase):
     def tearDown(self):self.panel.shutdown();self.panel.close()
 
 class PenStrokeControls(PanelTest):
-    def test_default_four_mm_requires_explicit_confirmation_and_only_sets(self):
+    def test_default_five_mm_requires_explicit_confirmation_and_only_sets(self):
         p=self.panel
-        self.assertEqual(p.pen_stroke.value(),4)
+        self.assertEqual(p.pen_stroke.value(),5)
         self.assertEqual(p.z_clearance.value(),5)
         self.assertFalse(p.clearance.isChecked())
         self.assertEqual(p.pen_direction.currentData(),1)
@@ -35,7 +35,7 @@ class PenStrokeControls(PanelTest):
         p.stroke_confirmed.setChecked(True)
         self.assertTrue(p.stroke_button.isEnabled())
         p.stroke_button.click()
-        self.assertEqual(self.controller.calls,[('set_pen_stroke',dict(distance=4,direction=1,confirmed=True))])
+        self.assertEqual(self.controller.calls,[('set_pen_stroke',dict(distance=5,direction=1,confirmed=True))])
     def test_direction_relabels_jog_and_confirmation_resets(self):
         p=self.panel
         self.assertIn('降笔',p.z_jog_buttons[1].text())
@@ -96,7 +96,7 @@ class TouchCalibration(PanelTest):
         self.assertTrue(p.touch_button.isEnabled())
         self.controller.calls=[]
         p.touch_button.click()
-        self.assertEqual(self.controller.calls,[('set_pen_touch',dict(lift=2,press=3,direction=1,confirmed=True)),('lift_pen',{})])
+        self.assertEqual(self.controller.calls,[('set_pen_touch',dict(lift=3,press=2,direction=1,confirmed=True)),('lift_pen',{})])
     def test_touch_uses_advanced_lift_press_and_direction(self):
         p=self.panel;p.lift.setValue(1.5);p.press.setValue(2.5);p.pen_direction.setCurrentIndex(1)
         p.record_touch()

@@ -104,6 +104,8 @@ class ApplicationService:
 
     def _editable(self):
         state = self.controller.snapshot().get('state')
+        if state == 'calibrating':
+            raise ServiceError('DEVICE_BUSY', '正在校准笔高，请等待结束或停止校准后再编辑')
         if state in {'running', 'pausing', 'paused'}:
             raise ServiceError('DEVICE_BUSY', '作业进行中，请先暂停后取消，或等待结束再编辑')
         self._gui_idle()

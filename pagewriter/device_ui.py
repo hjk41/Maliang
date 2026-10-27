@@ -1,19 +1,21 @@
 """Guided writing wizard. All transport work is owned by the controller thread."""
 import math
 import time
+import uuid
 from PySide6.QtCore import Qt, QTimer, QPointF
 from PySide6.QtGui import QPainterPath, QTransform
 from PySide6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QGridLayout, QFormLayout, QLabel, QPushButton,
     QLineEdit, QDoubleSpinBox, QCheckBox, QMessageBox, QComboBox, QFrame, QGroupBox, QButtonGroup)
 
 from .devices import create_controller, get_profile, list_profiles
+from .devices.base import PEN_CALIBRATION_STROKE_MM
 
 PRESETS = get_profile('songboshi_2024').presets
 TEST_SQUARE_MM = 4.0
 IDLE_STATES = {'idle', 'ready', 'complete'}
 STATE_LABELS = {'disconnected': '未连接', 'unknown': '等待确认（已锁定）', 'idle': '空闲', 'ready': '就绪',
                 'complete': '完成', 'running': '正在书写', 'pausing': '正在暂停', 'paused': '已暂停',
-                'stopped': '已停止', 'failed': '故障锁定', 'connecting': '连接中'}
+                'stopped': '已停止', 'failed': '故障锁定', 'connecting': '连接中', 'calibrating': '正在校准笔高'}
 STYLE = """
 QFrame#wizardStep { background:white; border:1px solid #e0e5ef; border-radius:8px; }
 QFrame#wizardStep[status="active"] { border:2px solid #7197d8; }
@@ -129,6 +131,7 @@ class DevicePanel(QWidget):
         self._preset_placement_index = 0
         self._preset_context = None
         self._clearance_sent = -math.inf
+        self._calibration_request_id = None
         self.setStyleSheet(STYLE)
         layout = QVBoxLayout(self)
         layout.setSpacing(10)
@@ -141,8 +144,8 @@ class DevicePanel(QWidget):
         self.z_clearance = spin(.1, 5, 5)
         self.step = spin(.05, 1, .2)
         self.feed = spin(1, 300, 300, ' mm/min', 0)
-        self.lift = spin(.5, 5, 2)
-        self.press = spin(0, 5, 3)
+        self.lift = spin(.5, 5, 3)
+        self.press = spin(0, 5, 2)
         self.pen_direction = QComboBox()
         self.pen_direction.addItem('Z+ 降笔（本机已确认）', 1)
         self.pen_direction.addItem('Z− 降笔', -1)
@@ -198,7 +201,7 @@ class DevicePanel(QWidget):
         self.step2.add(hint('屏幕上的照片总是按正常方向显示，倒放由程序换算，不用旋转照片。'))
 
         self.step3 = Step(3, '对准笔尖')
-        self.step3.add(hint('装笔时让笔尖离纸约 1 毫米、不要碰到纸。可先用手把笔头推到要对准的地方附近（1 厘米内），再连接。'))
+        self.step3.add(hint('装笔时让笔尖离纸约 3 毫米、不要碰到纸。可先用手把笔头推到要对准的地方附近（1 厘米内），再连接。'))
         self.clearance = QCheckBox('笔尖周围没有障碍')
         self.clearance.setToolTip('笔尖周围 1 厘米、上下 5 毫米内没有书夹、手或其他东西；笔只会在这个范围内移动。')
         self.clearance.toggled.connect(self.clearance_toggled)
@@ -247,12 +250,27 @@ class DevicePanel(QWidget):
         self.reason3 = self.reason_label(self.step3)
 
         self.step4 = Step(4, '校准笔的高度')
-        self.step4.add(hint('可以在对准之前或之后做。一点一点降笔，直到笔尖刚好碰到纸面，再点「记下」；之后笔会自动抬到离纸 2 毫米，方便对准。会留下一个小点，可先把笔移到不显眼的地方。'))
+        self.step4.add(hint('把笔尖调到离纸约 3 毫米，选一处可留墨点的空白。点击「校准」后，笔尖下降 5 毫米点一下，再抬回。'))
         # Same confirmation as step 3, so this step can be done first.
         self.clearance4 = QCheckBox('笔尖周围没有障碍')
         self.clearance4.setToolTip(self.clearance.toolTip())
         self.clearance4.toggled.connect(self.clearance_toggled)
         self.step4.add(self.clearance4)
+        self.calibrate_button = self.make_button('校准', self.calibrate_pen, primary=True)
+        self.step4.add(self.calibrate_button)
+        self.calibration_confirm_button = self.make_button('墨点清晰、纸面完好，确认通过', self.confirm_pen_calibration)
+        self.step4.add(self.calibration_confirm_button)
+        self.calibration_confirm_button.hide()
+        self.calibration_stop_button = self.make_button('停止校准', lambda: self.send('stop'))
+        self.step4.add(self.calibration_stop_button)
+        self.calibration_stop_button.hide()
+        self.touch_result = hint('')
+        self.step4.add(self.touch_result)
+        self.reason4 = self.reason_label(self.step4)
+        # Precise contact capture remains available in the advanced controls.
+        self.precise_pen_box = QGroupBox('精细笔高校准')
+        precise = QVBoxLayout(self.precise_pen_box)
+        precise.addWidget(hint('需要精细设置时，可小步降笔至刚碰纸，再记录接触高度。'))
         row = QHBoxLayout()
         self.z_jog_buttons = {}
         for direction in (-1, 1):
@@ -262,7 +280,7 @@ class DevicePanel(QWidget):
             button.clicked.connect(lambda checked=False, d=direction: self.send('jog', axis='Z', distance=d*min(self.z_step.currentData(), .25), feed=min(self.feed.value(), 30)))
             self.z_jog_buttons[direction] = button
             row.addWidget(button, 1)
-        self.step4.add(row)
+        precise.addLayout(row)
         row = QHBoxLayout()
         self.z_step = QComboBox()
         for value in (.05, .1, .25):
@@ -272,15 +290,12 @@ class DevicePanel(QWidget):
         self.height_label.setWordWrap(True)
         row.addWidget(self.z_step)
         row.addWidget(self.height_label, 1)
-        self.step4.add(row)
+        precise.addLayout(row)
         self.touch_button = self.make_button('刚好碰到纸，记下这个高度', self.record_touch, primary=True)
-        self.step4.add(self.touch_button)
-        self.touch_result = hint('')
-        self.step4.add(self.touch_result)
+        precise.addWidget(self.touch_button)
         self.lift_button = self.make_button('抬笔', lambda: self.send('lift_pen'))
         self.lift_button.setToolTip('把笔抬到记下的抬笔高度（只会向离开纸面的方向移动）。')
-        self.step4.add(self.lift_button)
-        self.reason4 = self.reason_label(self.step4)
+        precise.addWidget(self.lift_button)
         self.update_z_labels()
         self.pen_direction.currentIndexChanged.connect(self.stroke_settings_changed)
 
@@ -338,11 +353,12 @@ class DevicePanel(QWidget):
         av.addWidget(QLabel('按机器轴点动'))
         av.addLayout(row)
         av.addWidget(QLabel('<b>笔高度</b>'))
+        av.addWidget(self.precise_pen_box)
         form = QFormLayout()
         form.addRow('移动时离纸', self.lift)
         form.addRow('书写时多压', self.press)
         form.addRow('降笔方向', self.pen_direction)
-        self.pen_stroke = spin(.1, 5, 4)
+        self.pen_stroke = spin(.1, 5, PEN_CALIBRATION_STROKE_MM)
         self.pen_stroke.valueChanged.connect(self.stroke_settings_changed)
         form.addRow('固定抬落行程', self.pen_stroke)
         av.addLayout(form)
@@ -533,6 +549,23 @@ class DevicePanel(QWidget):
         self.send('lift_pen')
         self.log.setText('已记下碰纸高度，正在把笔抬起。')
 
+    def calibrate_pen(self):
+        if self._calibration_request_id is not None:
+            return
+        self._calibration_request_id = uuid.uuid4().hex
+        self.pen_stroke.setValue(PEN_CALIBRATION_STROKE_MM)
+        self.send('calibrate_pen', direction=self.pen_direction.currentData(),
+                  calibration_id=self._calibration_request_id, confirmed=True)
+        self.log.setText('正在校准：下降 5 毫米点一下，再抬回。请稍等后检查纸面。')
+        self.update_state()
+
+    def confirm_pen_calibration(self):
+        calibration = self.controller.snapshot().get('pen_calibration') or {}
+        if calibration.get('phase') != 'inspect':
+            return
+        self.send('confirm_pen_calibration', calibration_id=calibration['id'], confirmed=True)
+        self.calibration_confirm_button.setEnabled(False)
+
     def confirm(self, title, text, accept='确认开始'):
         box = QMessageBox(QMessageBox.Icon.Question, title, text, parent=self)
         ok = box.addButton(accept, QMessageBox.ButtonRole.AcceptRole)
@@ -688,6 +721,7 @@ class DevicePanel(QWidget):
             else:
                 self.controller.submit(action, **kwargs)
         except Exception as error:
+            if action == 'calibrate_pen': self._calibration_request_id = None
             self.log.setText(self.translate_error(str(error)))
 
     def geometry_id(self):
@@ -783,6 +817,15 @@ class DevicePanel(QWidget):
                 messages.append(str(event))
                 continue
             kind, text = event.get('kind'), event.get('text', '')
+            if kind == 'rejected' and event.get('action') == 'calibrate_pen':
+                if event.get('calibration_id') in (None, self._calibration_request_id):
+                    self._calibration_request_id = None
+            if kind == 'pen_calibration_ready':
+                messages.append('笔已抬回。请检查墨点清晰、纸面没有搓破，再确认通过；效果不好就调整后重新校准。')
+                continue
+            if kind == 'pen_calibration_confirmed':
+                messages.append('校准完成：已确认墨点和纸面正常，抬落行程为 5 毫米。')
+                continue
             if kind == 'rejected' and event.get('action') == 'anchor_preset':
                 self._preset_request_pending = False
             if kind in {'rx', 'tx'}:
@@ -837,14 +880,19 @@ class DevicePanel(QWidget):
             self._preset_context = context
             connected = state.get('connection', False)
             machine_state = state.get('state')
+            calibration = state.get('pen_calibration') or {}
+            if calibration.get('id') == self._calibration_request_id or not connected or machine_state in {'unknown','stopped','disconnected'}:
+                self._calibration_request_id = None
+            calibration_busy = machine_state == 'calibrating' or self._calibration_request_id is not None
+            inspecting = calibration.get('phase') == 'inspect' and not calibration_busy
             busy = state.get('pending', False)
             fresh = state.get('coordinate_age', math.inf) <= 2
             # Not including the status query in flight every 0.5 s: sampling
             # it made every button blink grey now and then.
-            idle = connected and machine_state in IDLE_STATES and not busy and fresh
+            idle = connected and machine_state in IDLE_STATES and not busy and fresh and not calibration_busy
             calibrated = state.get('calibrated', False)
             up, down, touch = state.get('pen_up'), state.get('pen_down'), state.get('pen_touch')
-            pens = up is not None and down is not None
+            pens = up is not None and down is not None and not calibration_busy
             if 'clearance' in state and state['clearance'] is None and self.clearance.isChecked() and time.monotonic()-self._clearance_sent > 1:
                 self.set_clearance_boxes(False)
             cleared = self.clearance.isChecked()
@@ -867,7 +915,14 @@ class DevicePanel(QWidget):
                     below, above = room[2]
                     extra = f"　还能往下 {above if self.pen_direction.currentData() > 0 else below:.2f} mm"
                 self.height_label.setText(f'当前高度 Z {position[2]:.2f} mm{extra}')
-            if touch is not None and pens:
+            if calibration_busy:
+                self.touch_result.setText('正在抬回原高度，请稍等。' if calibration.get('phase') == 'lifting'
+                                          else '正在下降 5 毫米点测，请稍等。')
+            elif inspecting:
+                self.touch_result.setText('笔已抬回。墨点清晰、纸面没有搓破，就确认通过；否则调整笔高后重新校准。')
+            elif calibration.get('phase') == 'confirmed' and pens:
+                self.touch_result.setText('已确认墨点清晰、纸面完好。抬落行程为 5 毫米。')
+            elif touch is not None and pens:
                 self.touch_result.setText(f'已记下：碰纸高度 Z {touch:.2f}。移动时抬到 {up:.2f}（离纸 {abs(touch-up):g} mm），'
                                           f'书写时落到 {down:.2f}（多压 {abs(down-touch):g} mm，靠弹簧缓冲）。')
             elif pens:
@@ -889,13 +944,25 @@ class DevicePanel(QWidget):
             self.connect_button.setEnabled(not connected)
             self.disconnect_button.setEnabled(connected)
             self.port.setEnabled(not connected)
+            self.calibrate_button.setEnabled(idle and cleared and not calibration_busy)
+            self.calibrate_button.setText('重新校准' if inspecting or calibration.get('phase') == 'confirmed' else '校准')
+            self.calibration_confirm_button.setVisible(inspecting)
+            for button, primary in ((self.calibrate_button, not inspecting), (self.calibration_confirm_button, inspecting)):
+                if bool(button.property('primary')) != primary:
+                    button.setProperty('primary', primary)
+                    button.style().unpolish(button); button.style().polish(button)
+            direction_matches = inspecting and (calibration['down']-calibration['up'])*self.pen_direction.currentData() > 0
+            self.calibration_confirm_button.setEnabled(idle and cleared and direction_matches)
+            self.calibration_stop_button.setVisible(calibration_busy)
+            self.calibration_stop_button.setEnabled(connected and calibration_busy)
+            self.pen_direction.setEnabled(not calibration_busy)
             self.preset_placement.setEnabled(not connected or idle)
-            self.clearance.setEnabled(connected)
-            self.clearance4.setEnabled(connected)
+            self.clearance.setEnabled(connected and not calibration_busy)
+            self.clearance4.setEnabled(connected and not calibration_busy)
             for button in [*self.page_jog_buttons.values(), *self.axis_jog_buttons.values(), *self.z_jog_buttons.values()]:
                 button.setEnabled(idle and cleared)
             self.preset_button.setEnabled(idle and self.preset_confirmed.isChecked())
-            self.manual_button.setEnabled(connected and not running and not busy)
+            self.manual_button.setEnabled(connected and not running and not busy and not calibration_busy)
             self.touch_button.setEnabled(idle and cleared)
             self.lift_button.setEnabled(idle and pens)
             self.test_button.setEnabled(idle and calibrated and pens and self.window is not None)
@@ -903,7 +970,7 @@ class DevicePanel(QWidget):
             self.send_button.setEnabled(idle and calibrated and pens and authorized_ok)
             self.pause_button.setEnabled(machine_state == 'running')
             self.resume_button.setEnabled(machine_state == 'paused')
-            self.stop_button.setEnabled(connected and running)
+            self.stop_button.setEnabled(connected and (running or calibration_busy))
             self.reset_button.setEnabled(connected)
             self.reset_button.setVisible(self.advanced or (connected and machine_state in {'stopped', 'unknown'}))
             self.stroke_button.setEnabled(idle and self.stroke_confirmed.isChecked())
@@ -965,6 +1032,13 @@ class DevicePanel(QWidget):
         self.step6.set_expanded(False)
 
     TRANSLATIONS = {
+        'Confirmed 5 mm pen calibration and direction +/-1 required': '请先让笔尖离纸约 3 毫米，并核对高级设置中的降笔方向。',
+        'Pen calibration exceeds inspected Z envelope': '剩余下降范围不足 5 毫米。请先把笔尖调整到离纸约 3 毫米，再重新确认周围空间。',
+        'Pen calibration result is stale; run calibration again': '这次校准已失效，请调整好笔尖后重新校准。',
+        'Pen calibration request already used': '这次校准已经执行过，请等待完成后检查纸面。',
+        'Pen calibration requires visual confirmation of the dot and intact paper': '请先检查墨点清晰、纸面没有搓破，再确认通过。',
+        'Page geometry changed during pen calibration': '校准时页面发生变化，已停止。请重新检查笔尖位置。',
+        'WCO changed during pen calibration': '校准时设备坐标发生变化，已停止。请重新定位。',
         'Confirmed finite stroke and direction +/-1 required': '请勾选已核对降笔方向与弹簧行程，并选择有效方向和行程。',
         'Confirmed touch with finite lift/press and direction +/-1 required': '离纸 / 多压距离无效，请在高级设置中检查。',
         'Declare inspected clearance first': '请先在第 3 步勾选「笔尖周围没有障碍」。',
