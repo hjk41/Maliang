@@ -1,5 +1,5 @@
 [build-system]
-requires = ["setuptools>=77"]
+requires = ["setuptools>=84.2.1"]
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -11,7 +11,7 @@ requires-python = ">=3.12"
 license = "MIT"
 license-files = ["LICENSE"]
 authors = [{name = "hjk41"}]
-dependencies = ["PySide6_Essentials==6.11.2", "pyserial==3.5", "numpy==2.5.3", "jsonschema>=4.23,<5"]
+dependencies = ["PySide6_Essentials==6.12.0", "pyserial==3.5", "numpy==2.5.4", "jsonschema>=4.26.0,<5"]
 classifiers = [
   "Development Status :: 3 - Alpha",
   "Operating System :: Microsoft :: Windows",
@@ -20,8 +20,8 @@ classifiers = [
 ]
 
 [project.optional-dependencies]
-dev = ["Pillow>=13,<14", "fonttools>=4.64,<5", "build>=1.2,<2", "PyInstaller>=6.11,<7"]
-fontbuild = ["Pillow==13.0.0", "fonttools==4.64.0", "opencv-contrib-python-headless==5.0.0.93", "scikit-image==0.26.0"]
+dev = ["Pillow>=13,<14", "fonttools>=4.67.0,<5", "build>=1.6.1,<2", "PyInstaller>=6.22.3,<7"]
+fontbuild = ["Pillow==13.0.0", "fonttools==4.67.0", "opencv-contrib-python-headless==5.0.0.93", "scikit-image==0.26.0"]
 agent = ["mcp>=2.3,<3"]
 
 [project.scripts]
